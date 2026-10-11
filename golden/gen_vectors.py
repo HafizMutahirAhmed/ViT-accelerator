@@ -4,7 +4,7 @@ Usage: python3 golden/gen_vectors.py
 Output: golden/vectors/*.hex, all in $readmemh format (one word per line,
 two's complement, matrices in row-major order).
 
-Matmul cases, <case> = mm_small, mm_ragged, mm_extreme, mm_qkv:
+Matmul cases, <case> = mm_small, mm_ragged, mm_extreme, mm_qkv, mm_k1, mm_k2:
   <case>_cfg.hex    32-bit words: M, K, N, scale, shift
   <case>_A.hex      M*K  INT8   A[m][k]
   <case>_B.hex      K*N  INT8   B[k][n]
@@ -159,6 +159,15 @@ def gen_matmul():
     dump_matmul("mm_qkv", a, b, rand_bias(np.random.default_rng(14), a, b))
 
 
+def gen_short_k():
+    # K = 1 and K = 2: the shortest tiles, so consecutive tiles are as close
+    # together as they can get; ragged in M and N at both 4x4 and 8x8
+    for k_dim in (1, 2):
+        rng = np.random.default_rng([30, k_dim])
+        a, b = rand_int8(rng, (19, k_dim)), rand_int8(rng, (k_dim, 21))
+        dump_matmul(f"mm_k{k_dim}", a, b, rand_bias(np.random.default_rng([31, k_dim]), a, b))
+
+
 def gen_tile():
     count = 0
     for rows, cols in ((2, 2), (4, 4), (3, 5)):
@@ -222,6 +231,7 @@ def gen_requant():
 if __name__ == "__main__":
     os.makedirs(VEC_DIR, exist_ok=True)
     gen_matmul()
+    gen_short_k()
     gen_tile()
     gen_requant()
     print(f"wrote {len(os.listdir(VEC_DIR))} files to {VEC_DIR}")

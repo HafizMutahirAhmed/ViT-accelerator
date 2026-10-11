@@ -21,13 +21,33 @@
 // requantize: clip((sum * scale) >>> shift_value) to a signed DATA_WIDTH
 // integer. bias_in[c] is the bias of tile column c.
 //
-// Timing: the read starts in the tile_done cycle, step s in cycle tile_done + s,
-// and the array is not stalled. This relies on the next tile's first slice
-// reaching the array no earlier than the tile_done cycle: pe(row, col) is then
-// overwritten row + col cycles later, always after the drain has read it.
-// tile_row, tile_col and bias_in are sampled when tile_done is high. A write
-// appears two cycles after its read step. drain_mode, rows_total, cols_total,
-// scale and shift_value must hold until drain_busy is low after the last tile.
+// Timing contract. The array is not stalled and there is no snapshot of the
+// accumulators: the drain reads each one before the next tile overwrites it.
+//   - T is the cycle in which tile_done is high. Every accumulator of the tile
+//     is final in cycle T.
+//   - Read step s happens in cycle T + s and is registered on the clock edge
+//     that ends that cycle. Row-select reads pe(s, col) for every col,
+//     column-select reads pe(row, s) for every row.
+//   - F is the cycle in which the next tile's first slice (first_k_in high) is
+//     at the array inputs. pe(row, col) takes its new value on the clock edge
+//     that ends cycle F + row + col, and holds the old one until then.
+//   - So the caller must guarantee F >= T. The margin is F - T + col cycles
+//     in row-select and F - T + row cycles in column-select.
+//   - matmul_stream_controller gives F = T exactly, so the margin is zero for
+//     column 0 in row-select and for row 0 in column-select. pe(0, 0) is read
+//     in cycle T and overwritten by the same clock edge that captures it.
+//   - Consequences: accumulator_in must come straight from the array with no
+//     register in between, tile_done must not be delayed, and the next tile
+//     must not start earlier than the controller starts it.
+//   - After the last tile nothing overwrites the accumulators as long as the
+//     array is fed zeros with first_k_in low.
+// tile_row, tile_col and bias_in are sampled when tile_done is high and must
+// stay in use for the whole drain, so the next tile_done must come at least
+// SYS_ROW cycles later in row-select and SYS_COL cycles later in column-select.
+// The controller's tile period, inner_dim + SYS_ROW + SYS_COL - 2, always
+// meets that. A write appears two cycles after its read step. drain_mode,
+// rows_total, cols_total, scale and shift_value must hold until drain_busy is
+// low after the last tile.
 //////////////////////////////////////////////////////////////////////////////////
 
 module drain #(

@@ -48,7 +48,7 @@ module tb_drain #(
     localparam int ADDRESS_WIDTH      = $clog2(BUFFER_DEPTH);
     localparam int BIAS_ADDRESS_WIDTH = $clog2(BIAS_BUFFER_DEPTH);
 
-    localparam int CASE_COUNT       = 3;  // mm_small, mm_ragged, mm_qkv
+    localparam int CASE_COUNT       = 5;  // mm_small, mm_ragged, mm_qkv, mm_k1, mm_k2
     localparam int VECTOR_WORDS_MAX = 65536;
     localparam int TIMEOUT_CYCLES   = 4000000;
 
@@ -491,6 +491,9 @@ module tb_drain #(
         run_case("mm_small");
         run_case("mm_ragged");
         run_case("mm_qkv");
+        // K = 1 and K = 2: tiles as close together as the controller can make them
+        run_case("mm_k1");
+        run_case("mm_k2");
 
         if (runs_failed == 0) begin
             $display("PASS: %0dx%0d array, %0d of %0d runs (%0d cases x 2 drain modes), %0d of %0d Y entries correct",
