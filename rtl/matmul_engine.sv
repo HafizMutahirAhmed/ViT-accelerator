@@ -24,7 +24,9 @@
 // low bits. Array inputs are the buffer read data where the controller's lane
 // enable is high and zero elsewhere, registered once together with first_k.
 //
-// Sequencer: start loads descriptor start_index into the register bank, runs
+// Sequencer: start reads descriptor start_index from the memory, moves it
+// through a fetch register into the register bank (so every field the
+// datapath uses comes from a plain register, not a memory output), runs
 // the op, waits for the last tile and for the drain to finish, then goes on
 // to the next descriptor, or stops and pulses done when last_op is set. The
 // register bank holds every field stable for the whole op.
@@ -122,13 +124,15 @@ module matmul_engine #(
     typedef enum logic [2:0] {
         STATE_IDLE,
         STATE_FETCH,   // descriptor memory read
-        STATE_LOAD,    // register bank load
+        STATE_LOAD,    // memory output into the fetch register
+        STATE_APPLY,   // fetch register into the register bank
         STATE_LAUNCH,  // start the stream controller
         STATE_RUN,     // until the last tile is done
         STATE_DRAIN    // until the drain has written everything
     } state_t;
 
     state_t      state;
+    descriptor_t descriptor_fetched;
     descriptor_t descriptor;
 
     logic controller_start;
@@ -156,7 +160,11 @@ module matmul_engine #(
                     state <= STATE_LOAD;
                 end
                 STATE_LOAD: begin
-                    descriptor <= descriptor_t'(descriptor_read_data[DESCRIPTOR_WIDTH-1:0]);
+                    descriptor_fetched <= descriptor_t'(descriptor_read_data[DESCRIPTOR_WIDTH-1:0]);
+                    state              <= STATE_APPLY;
+                end
+                STATE_APPLY: begin
+                    descriptor <= descriptor_fetched;
                     state      <= STATE_LAUNCH;
                 end
                 STATE_LAUNCH: begin

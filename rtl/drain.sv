@@ -288,6 +288,21 @@ module drain #(
 
     assign write_address = address_pipeline[REQUANTIZE_LATENCY-1];
 
+    // scale and shift, registered once per group of lanes so that no single
+    // register drives every requantizer
+    localparam int LANE_GROUP_SIZE = 4;
+    localparam int LANE_GROUPS     = (LANES + LANE_GROUP_SIZE - 1) / LANE_GROUP_SIZE;
+
+    (* dont_touch = "true" *) logic signed [LANE_GROUPS-1:0][SCALE_WIDTH-1:0] scale_group;
+    (* dont_touch = "true" *) logic [LANE_GROUPS-1:0][SHIFT_WIDTH-1:0]        shift_group;
+
+    always_ff @(posedge CLK) begin
+        for (int group = 0; group < LANE_GROUPS; group++) begin
+            scale_group[group] <= scale;
+            shift_group[group] <= shift_value;
+        end
+    end
+
     // requantize; valid_out is the lane write enable
     genvar lane;
     generate
@@ -301,8 +316,8 @@ module drain #(
                 .CLK                (CLK),
                 .valid_in           (lane_write_reg[lane]),
                 .unquantized_result (biased_accumulator_reg[lane]),
-                .scale              (scale),
-                .shift_value        (shift_value),
+                .scale              (scale_group[lane / LANE_GROUP_SIZE]),
+                .shift_value        (shift_group[lane / LANE_GROUP_SIZE]),
                 .valid_out          (write_enable[lane]),
                 .quantized_result   (write_data[lane])
             );
