@@ -41,9 +41,11 @@ package vit_config_pkg;
     // words per operand buffer bank
     parameter  BANK_DEPTH = 4096;
 
-    // cycles from an operand buffer read address to its read data: block RAM
-    // read, block RAM output register, register after the cascade multiplexer
-    parameter  BUFFER_READ_LATENCY = 3;
+    // cycles from a buffer read address to its read data: read address
+    // register, block RAM read, block RAM output register, register after the
+    // cascade multiplexer. In matmul_engine the address register is a separate
+    // one per pool buffer, in front of the operand_buffer.
+    parameter  BUFFER_READ_LATENCY = 4;
 
     // cycles from the requantize inputs to its result: operand, product,
     // product hold and shifted-value registers

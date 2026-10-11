@@ -87,6 +87,9 @@ module matmul_engine #(
     localparam int BIAS_ADDRESS_WIDTH      = vit_config_pkg::BIAS_ADDRESS_WIDTH;
     localparam int BUFFER_READ_LATENCY     = vit_config_pkg::BUFFER_READ_LATENCY;
     localparam int POOL_WRITE_LATENCY      = vit_config_pkg::POOL_WRITE_LATENCY;
+    // the read address register in front of every buffer is one of the
+    // BUFFER_READ_LATENCY stages
+    localparam int MEMORY_READ_LATENCY     = BUFFER_READ_LATENCY - 1;
     localparam int DESCRIPTOR_COUNT        = vit_config_pkg::DESCRIPTOR_COUNT;
     localparam int DESCRIPTOR_WIDTH        = vit_config_pkg::DESCRIPTOR_WIDTH;
     localparam int DESCRIPTOR_MEMORY_WIDTH = vit_config_pkg::DESCRIPTOR_MEMORY_WIDTH;
@@ -272,6 +275,13 @@ module matmul_engine #(
                 end
             end
 
+            // read address register, one per buffer, right before the block RAM
+            logic [DEPTH_ADDRESS_WIDTH-1:0] read_address_reg;
+
+            always_ff @(posedge CLK) begin
+                read_address_reg <= read_address;
+            end
+
             // write port registers, one set per buffer, right before the block RAM
             logic [POOL_WRITE_LATENCY-1:0][LANES-1:0]                 write_enable_pipeline;
             logic [POOL_WRITE_LATENCY-1:0][DEPTH_ADDRESS_WIDTH-1:0]   write_address_pipeline;
@@ -299,13 +309,13 @@ module matmul_engine #(
                 .SYS_LANES    (LANES),
                 .BANK_DEPTH   (DEPTH),
                 .DATA_WIDTH   (DATA_WIDTH),
-                .READ_LATENCY (BUFFER_READ_LATENCY)
+                .READ_LATENCY (MEMORY_READ_LATENCY)
             ) buffer_inst (
                 .CLK           (CLK),
                 .write_enable  (write_enable_pipeline[POOL_WRITE_LATENCY-1]),
                 .write_address ({LANES{write_address_pipeline[POOL_WRITE_LATENCY-1]}}),
                 .write_data    (write_data_pipeline[POOL_WRITE_LATENCY-1]),
-                .read_address  (read_address),
+                .read_address  (read_address_reg),
                 .read_data     (pool_read_data[buffer])
             );
         end
@@ -317,22 +327,27 @@ module matmul_engine #(
     // bias store: column bank c holds bias[c], bias[c + SYS_COL], ...
     // ------------------------------------------------------------------
     logic [BIAS_ADDRESS_WIDTH-1:0]      bias_address;
+    logic [BIAS_ADDRESS_WIDTH-1:0]      bias_read_address_reg;
     logic [SYS_COL-1:0][ACC_WIDTH-1:0]  bias_read_data;
 
     assign bias_address = busy ? descriptor.bias_base + BIAS_ADDRESS_WIDTH'(tile_col)
                                : host_address[BIAS_ADDRESS_WIDTH-1:0];
 
+    always_ff @(posedge CLK) begin
+        bias_read_address_reg <= bias_address;
+    end
+
     operand_buffer #(
         .SYS_LANES    (SYS_COL),
         .BANK_DEPTH   (BIAS_DEPTH),
         .DATA_WIDTH   (ACC_WIDTH),
-        .READ_LATENCY (BUFFER_READ_LATENCY)
+        .READ_LATENCY (MEMORY_READ_LATENCY)
     ) bias_store (
         .CLK           (CLK),
         .write_enable  (busy ? '0 : host_bias_write_enable),
         .write_address ({SYS_COL{bias_address}}),
         .write_data    (host_bias_write_data),
-        .read_address  (bias_address),
+        .read_address  (bias_read_address_reg),
         .read_data     (bias_read_data)
     );
 
