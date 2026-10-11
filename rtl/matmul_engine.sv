@@ -35,8 +35,9 @@
 // (host_buffer_id, host_address, one write enable per bank), the bias store
 // (host_address, one write enable per column bank) and the descriptor memory
 // (host_descriptor_index, one write enable per 32-bit word, word 0 least
-// significant). A pool write lands vit_config_pkg::POOL_WRITE_LATENCY cycles
-// after it is presented. Read data is valid vit_config_pkg::BUFFER_READ_LATENCY cycles
+// significant). Every host write is registered once after the busy gate, so
+// it lands one cycle (vit_config_pkg::POOL_WRITE_LATENCY for the pool) after
+// it is presented. Read data is valid vit_config_pkg::BUFFER_READ_LATENCY cycles
 // after the address. While busy is high host writes are ignored and the read
 // data is not meaningful.
 //
@@ -104,14 +105,30 @@ module matmul_engine #(
     logic [DESCRIPTOR_INDEX_WIDTH-1:0]  descriptor_index;
     logic [DESCRIPTOR_MEMORY_WIDTH-1:0] descriptor_read_data;
 
+    // host write, registered after the busy gate
+    logic [DESCRIPTOR_WORDS-1:0]       descriptor_write_enable_reg;
+    logic [DESCRIPTOR_INDEX_WIDTH-1:0] descriptor_write_index_reg;
+    logic [31:0]                       descriptor_write_data_reg;
+
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            descriptor_write_enable_reg <= '0;
+        end
+        else begin
+            descriptor_write_enable_reg <= busy ? '0 : host_descriptor_write_enable;
+        end
+        descriptor_write_index_reg <= host_descriptor_index;
+        descriptor_write_data_reg  <= host_descriptor_write_data;
+    end
+
     genvar word;
     generate
         for (word = 0; word < DESCRIPTOR_WORDS; word++) begin: descriptor_word
             logic [31:0] memory[DESCRIPTOR_COUNT];
 
             always_ff @(posedge CLK) begin
-                if (!busy && host_descriptor_write_enable[word]) begin
-                    memory[host_descriptor_index] <= host_descriptor_write_data;
+                if (descriptor_write_enable_reg[word]) begin
+                    memory[descriptor_write_index_reg] <= descriptor_write_data_reg;
                 end
                 descriptor_read_data[32*word +: 32] <= memory[descriptor_index];
             end
@@ -345,6 +362,22 @@ module matmul_engine #(
         bias_read_address_reg <= bias_address;
     end
 
+    // host write, registered after the busy gate
+    logic [SYS_COL-1:0]                bias_write_enable_reg;
+    logic [BIAS_ADDRESS_WIDTH-1:0]     bias_write_address_reg;
+    logic [SYS_COL-1:0][ACC_WIDTH-1:0] bias_write_data_reg;
+
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            bias_write_enable_reg <= '0;
+        end
+        else begin
+            bias_write_enable_reg <= busy ? '0 : host_bias_write_enable;
+        end
+        bias_write_address_reg <= host_address[BIAS_ADDRESS_WIDTH-1:0];
+        bias_write_data_reg    <= host_bias_write_data;
+    end
+
     operand_buffer #(
         .SYS_LANES    (SYS_COL),
         .BANK_DEPTH   (BIAS_DEPTH),
@@ -352,9 +385,9 @@ module matmul_engine #(
         .READ_LATENCY (MEMORY_READ_LATENCY)
     ) bias_store (
         .CLK           (CLK),
-        .write_enable  (busy ? '0 : host_bias_write_enable),
-        .write_address ({SYS_COL{bias_address}}),
-        .write_data    (host_bias_write_data),
+        .write_enable  (bias_write_enable_reg),
+        .write_address ({SYS_COL{bias_write_address_reg}}),
+        .write_data    (bias_write_data_reg),
         .read_address  (bias_read_address_reg),
         .read_data     (bias_read_data)
     );
