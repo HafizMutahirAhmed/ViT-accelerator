@@ -8,7 +8,9 @@ Matmul cases, <case> = mm_small, mm_ragged, mm_extreme, mm_qkv:
   <case>_cfg.hex    32-bit words: M, K, N, scale, shift
   <case>_A.hex      M*K  INT8   A[m][k]
   <case>_B.hex      K*N  INT8   B[k][n]
-  <case>_C_acc.hex  M*N  INT32  accumulators at SA drain, before requant
+  <case>_bias.hex   N    INT32  bias[n], one per output column
+  <case>_C_acc.hex  M*N  INT32  A @ B: accumulators held in the PEs, no bias
+  <case>_C_bias.hex M*N  INT32  A @ B + bias[n]: requantizer input
   <case>_Y.hex      M*N  INT8   requantized output
 
 Requantizer on its own, vector i is one (acc, scale, shift) -> out:
@@ -24,8 +26,9 @@ import os
 import numpy as np
 
 from int8_ops import (ACC_MAX, ACC_MIN, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH,
-                      SCALE_MAX, SCALE_MIN, SCALE_WIDTH, SHIFT_MAX, matmul_acc,
-                      read_hex, requantize, wrap_signed, write_hex)
+                      SCALE_MAX, SCALE_MIN, SCALE_WIDTH, SHIFT_MAX, add_bias,
+                      linear_acc, matmul_acc, read_hex, requantize, wrap_signed,
+                      write_hex)
 
 VEC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors")
 CFG_WIDTH = 32
@@ -70,15 +73,28 @@ def path(name):
     return os.path.join(VEC_DIR, name)
 
 
-def dump_matmul(case, a, b):
+def rand_bias(rng, a, b):
+    """Random bias[n] up to a quarter of the largest |A @ B| accumulator."""
+    lim = max(1, int(np.abs(matmul_acc(a, b)).max()) // 4)
+    return rng.integers(-lim, lim + 1, size=b.shape[1], dtype=np.int64)
+
+
+def dump_matmul(case, a, b, bias):
     c = matmul_acc(a, b)
+    # scale/shift come from the accumulators alone, so adding a bias to a case
+    # leaves its cfg unchanged
     scale, shift = pick_scale_shift(c)
-    y = requantize(c, scale, shift)
+    cb = linear_acc(a, b, bias)
+    y = requantize(cb, scale, shift)
 
     # cross-check the vectorised model against the slow per-PE reference
     if a.shape[0] * a.shape[1] * b.shape[1] <= 100_000:
         assert np.array_equal(c, ref_matmul(a, b)), f"{case}: matmul model mismatch"
-    y_ref = [ref_requantize(v, scale, shift) for v in c.reshape(-1)]
+    cb_ref = [[int(wrap_signed(int(c[m, n]) + int(bias[n]), ACC_WIDTH))
+               for n in range(c.shape[1])] for m in range(c.shape[0])]
+    assert np.array_equal(cb, cb_ref), f"{case}: bias model mismatch"
+    assert np.array_equal(cb, add_bias(c, bias)), f"{case}: bias model mismatch"
+    y_ref = [ref_requantize(v, scale, shift) for v in cb.reshape(-1)]
     assert np.array_equal(y.reshape(-1), y_ref), f"{case}: requant model mismatch"
 
     m_dim, k_dim = a.shape
@@ -86,16 +102,20 @@ def dump_matmul(case, a, b):
     write_hex(path(f"{case}_cfg.hex"), [m_dim, k_dim, n_dim, scale, shift], CFG_WIDTH)
     write_hex(path(f"{case}_A.hex"), a, DATA_WIDTH)
     write_hex(path(f"{case}_B.hex"), b, DATA_WIDTH)
+    write_hex(path(f"{case}_bias.hex"), bias, ACC_WIDTH)
     write_hex(path(f"{case}_C_acc.hex"), c, ACC_WIDTH)
+    write_hex(path(f"{case}_C_bias.hex"), cb, ACC_WIDTH)
     write_hex(path(f"{case}_Y.hex"), y, DATA_WIDTH)
 
     # make sure what landed on disk is what the model produced
+    assert np.array_equal(read_hex(path(f"{case}_bias.hex"), ACC_WIDTH), bias)
     assert np.array_equal(read_hex(path(f"{case}_C_acc.hex"), ACC_WIDTH), c.reshape(-1))
+    assert np.array_equal(read_hex(path(f"{case}_C_bias.hex"), ACC_WIDTH), cb.reshape(-1))
     assert np.array_equal(read_hex(path(f"{case}_Y.hex"), DATA_WIDTH), y.reshape(-1))
 
     sat = int(np.count_nonzero((y == DATA_MIN) | (y == DATA_MAX)))
     print(f"{case:11s} {m_dim}x{k_dim} @ {k_dim}x{n_dim}  scale={scale} shift={shift}  "
-          f"acc range [{c.min()}, {c.max()}]  saturated {sat}/{y.size}")
+          f"acc+bias range [{cb.min()}, {cb.max()}]  saturated {sat}/{y.size}")
 
 
 def rand_int8(rng, shape):
@@ -103,15 +123,20 @@ def rand_int8(rng, shape):
 
 
 def gen_matmul():
+    # bias draws use their own generators so the A and B data never shift
+
     # one 8x8 output tile, K longer than the tile
     rng = np.random.default_rng(1)
-    dump_matmul("mm_small", rand_int8(rng, (8, 16)), rand_int8(rng, (16, 8)))
+    a, b = rand_int8(rng, (8, 16)), rand_int8(rng, (16, 8))
+    dump_matmul("mm_small", a, b, rand_bias(np.random.default_rng(11), a, b))
 
     # M and N not multiples of any likely tile size: edge tiles are partial
     rng = np.random.default_rng(2)
-    dump_matmul("mm_ragged", rand_int8(rng, (13, 24)), rand_int8(rng, (24, 11)))
+    a, b = rand_int8(rng, (13, 24)), rand_int8(rng, (24, 11))
+    dump_matmul("mm_ragged", a, b, rand_bias(np.random.default_rng(12), a, b))
 
-    # worst-case accumulation over the longest K in the model (MLP hidden 768)
+    # worst-case accumulation over the longest K in the model (MLP hidden 768);
+    # the extreme biases push columns 0 and 1 past INT32 so the drain adder wraps
     rng = np.random.default_rng(3)
     k_dim = 768
     alt = np.where(np.arange(k_dim) % 2 == 0, DATA_MIN, DATA_MAX)
@@ -119,11 +144,13 @@ def gen_matmul():
                   rand_int8(rng, k_dim)])
     b = np.stack([np.full(k_dim, DATA_MIN), np.full(k_dim, DATA_MAX), alt,
                   rand_int8(rng, k_dim)], axis=1)
-    dump_matmul("mm_extreme", a, b)
+    bias = np.array([ACC_MAX, ACC_MIN, 0, int(rand_bias(np.random.default_rng(13), a, b)[3])])
+    dump_matmul("mm_extreme", a, b, bias)
 
     # real layer shape: 197 tokens x embed 192 through a 192x192 linear
     rng = np.random.default_rng(4)
-    dump_matmul("mm_qkv", rand_int8(rng, (197, 192)), rand_int8(rng, (192, 192)))
+    a, b = rand_int8(rng, (197, 192)), rand_int8(rng, (192, 192))
+    dump_matmul("mm_qkv", a, b, rand_bias(np.random.default_rng(14), a, b))
 
 
 def gen_requant():

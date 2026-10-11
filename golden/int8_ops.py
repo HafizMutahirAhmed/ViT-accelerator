@@ -6,6 +6,8 @@ floats), so its results can be compared bit-for-bit with simulation.
 Fixed-point formats
   data  : signed INT8  (DATA_WIDTH  = 8)
   acc   : signed INT32 (ACC_WIDTH   = 32), wraps modulo 2**32 like the RTL adder
+  bias  : signed INT32 (ACC_WIDTH   = 32), one per output column, at the same
+          scale as acc; added to acc at drain, before the requantizer
   scale : signed INT8  (SCALE_WIDTH = 8), so a positive scale is 1..127
   shift : unsigned, SHIFT_WIDTH = $clog2(ACC_WIDTH) = 5 bits, 0..31
 """
@@ -50,6 +52,24 @@ def matmul_acc(a, b):
     if a.ndim != 2 or b.ndim != 2 or a.shape[1] != b.shape[0]:
         raise ValueError(f"shape mismatch: {a.shape} @ {b.shape}")
     return wrap_signed(a @ b, ACC_WIDTH)
+
+
+def add_bias(acc, bias):
+    """acc[m][n] + bias[n], the add done at SA drain.
+
+    acc: (M, N) int32, bias: (N,) int32 -> (M, N) int32. The adder is
+    ACC_WIDTH bits wide, so the sum wraps modulo 2**32; it does not saturate.
+    """
+    acc = _check_range("acc", acc, ACC_MIN, ACC_MAX)
+    bias = _check_range("bias", bias, ACC_MIN, ACC_MAX)
+    if acc.ndim != 2 or bias.shape != (acc.shape[1],):
+        raise ValueError(f"shape mismatch: acc {acc.shape}, bias {bias.shape}")
+    return wrap_signed(acc + bias, ACC_WIDTH)
+
+
+def linear_acc(a, b, bias):
+    """Linear op before requantization: A @ B + bias[col], INT32."""
+    return add_bias(matmul_acc(a, b), bias)
 
 
 def requantize(acc, scale, shift):
