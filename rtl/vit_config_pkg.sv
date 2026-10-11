@@ -36,7 +36,7 @@ package vit_config_pkg;
     // largest matmul the stream controller is sized for: (M x K) @ (K x N)
     parameter  ROWS_TOTAL_MAX = 197;
     parameter  INNER_DIM_MAX  = 768;
-    parameter  COLS_TOTAL_MAX = 768;
+    parameter  COLS_TOTAL_MAX = 1000;
 
     // words per operand buffer bank
     parameter  BANK_DEPTH = 4096;
@@ -55,7 +55,7 @@ package vit_config_pkg;
 
     // matmul_engine buffer pool, bias store and descriptor table
     parameter  BUFFER_COUNT     = 8;
-    parameter  BANK_DEPTH_MAX   = 32768;  // deepest bank a descriptor base can address
+    parameter  BANK_DEPTH_MAX   = 131072; // deepest bank a descriptor base can address
     parameter  BIAS_DEPTH       = 1024;   // bias words per column bank
     parameter  DESCRIPTOR_COUNT = 64;
 
