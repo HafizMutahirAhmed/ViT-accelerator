@@ -22,7 +22,7 @@
 // first SYS_ROW of them and the weight side the first SYS_COL. BUFFER_DEPTH
 // gives the words per bank of each buffer, 32 bits per buffer, buffer 0 in the
 // low bits. Array inputs are the buffer read data where the controller's lane
-// enable is high and zero elsewhere.
+// enable is high and zero elsewhere, registered once together with first_k.
 //
 // Sequencer: start loads descriptor start_index into the register bank, runs
 // the op, waits for the last tile and for the drain to finish, then goes on
@@ -33,8 +33,9 @@
 // (host_buffer_id, host_address, one write enable per bank), the bias store
 // (host_address, one write enable per column bank) and the descriptor memory
 // (host_descriptor_index, one write enable per 32-bit word, word 0 least
-// significant). Read data is valid one cycle after the address. While busy is
-// high host writes are ignored and the read data is not meaningful.
+// significant). Read data is valid vit_config_pkg::BUFFER_READ_LATENCY cycles
+// after the address. While busy is high host writes are ignored and the read
+// data is not meaningful.
 //
 // The descriptor field widths, BUFFER_COUNT, BIAS_DEPTH and DESCRIPTOR_COUNT
 // come from vit_config_pkg and cannot be overridden per instance.
@@ -83,6 +84,7 @@ module matmul_engine #(
     localparam int BANK_DEPTH_MAX          = vit_config_pkg::BANK_DEPTH_MAX;
     localparam int BIAS_DEPTH              = vit_config_pkg::BIAS_DEPTH;
     localparam int BIAS_ADDRESS_WIDTH      = vit_config_pkg::BIAS_ADDRESS_WIDTH;
+    localparam int BUFFER_READ_LATENCY     = vit_config_pkg::BUFFER_READ_LATENCY;
     localparam int DESCRIPTOR_COUNT        = vit_config_pkg::DESCRIPTOR_COUNT;
     localparam int DESCRIPTOR_WIDTH        = vit_config_pkg::DESCRIPTOR_WIDTH;
     localparam int DESCRIPTOR_MEMORY_WIDTH = vit_config_pkg::DESCRIPTOR_MEMORY_WIDTH;
@@ -205,8 +207,10 @@ module matmul_engine #(
 
     matmul_stream_controller #(
         .SYS_ROW    (SYS_ROW),
-        .SYS_COL    (SYS_COL),
-        .BANK_DEPTH (BANK_DEPTH_MAX)
+        .SYS_COL             (SYS_COL),
+        .BANK_DEPTH          (BANK_DEPTH_MAX),
+        .READ_LATENCY        (BUFFER_READ_LATENCY),
+        .ARRAY_INPUT_LATENCY (1)
     ) controller (
         .CLK                     (CLK),
         .reset                   (reset),
@@ -267,9 +271,10 @@ module matmul_engine #(
             end
 
             operand_buffer #(
-                .SYS_LANES  (LANES),
-                .BANK_DEPTH (DEPTH),
-                .DATA_WIDTH (DATA_WIDTH)
+                .SYS_LANES    (LANES),
+                .BANK_DEPTH   (DEPTH),
+                .DATA_WIDTH   (DATA_WIDTH),
+                .READ_LATENCY (BUFFER_READ_LATENCY)
             ) buffer_inst (
                 .CLK           (CLK),
                 .write_enable  (write_enable),
@@ -293,9 +298,10 @@ module matmul_engine #(
                                : host_address[BIAS_ADDRESS_WIDTH-1:0];
 
     operand_buffer #(
-        .SYS_LANES  (SYS_COL),
-        .BANK_DEPTH (BIAS_DEPTH),
-        .DATA_WIDTH (ACC_WIDTH)
+        .SYS_LANES    (SYS_COL),
+        .BANK_DEPTH   (BIAS_DEPTH),
+        .DATA_WIDTH   (ACC_WIDTH),
+        .READ_LATENCY (BUFFER_READ_LATENCY)
     ) bias_store (
         .CLK           (CLK),
         .write_enable  (busy ? '0 : host_bias_write_enable),
@@ -312,15 +318,18 @@ module matmul_engine #(
     // ------------------------------------------------------------------
     logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0]             activation_in;
     logic signed [SYS_COL-1:0][DATA_WIDTH-1:0]             weight_in;
+    logic                                                  first_k_array;
     logic signed [SYS_ROW-1:0][SYS_COL-1:0][ACC_WIDTH-1:0] accumulator_out;
 
-    always_comb begin
+    // array input register, after the buffer id multiplexer and the lane mask
+    always_ff @(posedge CLK) begin
         for (int i = 0; i < SYS_ROW; i++) begin
-            activation_in[i] = activation_lane_enable[i] ? pool_read_data[descriptor.activation_buffer_id][i] : '0;
+            activation_in[i] <= activation_lane_enable[i] ? pool_read_data[descriptor.activation_buffer_id][i] : '0;
         end
         for (int i = 0; i < SYS_COL; i++) begin
-            weight_in[i] = weight_lane_enable[i] ? pool_read_data[descriptor.weight_buffer_id][i] : '0;
+            weight_in[i] <= weight_lane_enable[i] ? pool_read_data[descriptor.weight_buffer_id][i] : '0;
         end
+        first_k_array <= first_k;
     end
 
     systolic_array #(
@@ -332,7 +341,7 @@ module matmul_engine #(
         .CLK             (CLK),
         .activation_in   (activation_in),
         .weight_in       (weight_in),
-        .first_k_in      (first_k),
+        .first_k_in      (first_k_array),
         .accumulator_out (accumulator_out)
     );
 

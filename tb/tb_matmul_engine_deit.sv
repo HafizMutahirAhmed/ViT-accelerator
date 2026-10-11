@@ -298,11 +298,11 @@ module tb_matmul_engine_deit #(
         @(negedge CLK);
         op_cycles = busy_cycles;
 
-        // read the whole output region back, one address per cycle
+        // read the whole output region back
         host_buffer_id = descriptor.output_buffer_id;
         for (int address = 0; address < region_end; address++) begin
             host_address = address;
-            @(negedge CLK);
+            repeat (vit_config_pkg::BUFFER_READ_LATENCY) @(negedge CLK);
             for (int lane = 0; lane < LANES; lane++) begin
                 automatic int relative = address - output_base;
                 automatic int bank_row = (relative >= 0) ? relative / stride : -1;

@@ -411,8 +411,7 @@ module tb_drain #(
             for (int tile = 0; tile < int'(row_tiles); tile++) begin
                 for (int col = 0; col < cols; col++) begin
                     output_read_address = tile*cols + col;
-                    @(negedge CLK);
-                    @(negedge CLK);
+                    repeat (vit_config_pkg::BUFFER_READ_LATENCY) @(negedge CLK);
                     for (int lane = 0; lane < SYS_ROW; lane++) begin
                         automatic int row = tile*SYS_ROW + lane;
                         if (row < rows && output_read_data[lane] !== expected_mem[row*cols + col]) begin
@@ -432,8 +431,7 @@ module tb_drain #(
             for (int tile = 0; tile < int'(col_tiles); tile++) begin
                 for (int row = 0; row < rows; row++) begin
                     output_read_address = tile*rows + row;
-                    @(negedge CLK);
-                    @(negedge CLK);
+                    repeat (vit_config_pkg::BUFFER_READ_LATENCY) @(negedge CLK);
                     for (int lane = 0; lane < SYS_COL; lane++) begin
                         automatic int col = tile*SYS_COL + lane;
                         if (col < cols && output_read_data[lane] !== expected_mem[row*cols + col]) begin

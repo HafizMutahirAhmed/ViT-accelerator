@@ -197,7 +197,7 @@ module tb_matmul_engine_chain #(
         host_buffer_id = descriptor.output_buffer_id;
         for (int address = 0; address < region_end(descriptor); address++) begin
             host_address = address;
-            @(negedge CLK);
+            repeat (vit_config_pkg::BUFFER_READ_LATENCY) @(negedge CLK);
             for (int lane = 0; lane < LANES; lane++) begin
                 automatic int relative = address - output_base;
                 automatic int bank_row = (relative >= 0) ? relative / stride : -1;

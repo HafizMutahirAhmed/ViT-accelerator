@@ -12,18 +12,21 @@
 //
 // Outputs come in two timing groups:
 //   - the read addresses, in the cycle the buffers are addressed;
-//   - activation_lane_enable, weight_lane_enable and first_k_out, one cycle
-//     later, lined up with the registered buffer read data.
+//   - activation_lane_enable, weight_lane_enable and first_k_out, READ_LATENCY
+//     cycles later, lined up with the buffer read data.
 // The array input for a lane is its read data when the lane enable is high
 // and zero otherwise. A lane enable is low outside the k stream and for lanes
 // past the matrix edge (global row >= rows_total, global col >= cols_total),
 // which is what makes ragged edge tiles work.
 //
+// ARRAY_INPUT_LATENCY is the number of register stages the user puts between
+// the masked read data (and first_k_out) and the array inputs.
+//
 // tile_done is high for one cycle, in the first cycle where every accumulator
 // of the tile is final. tile_row and tile_col give that tile's coordinates in
-// the same cycle. The next tile's first slice reaches the array in that cycle
-// too, so the accumulators must be captured on the clock edge that ends it.
-// all_tiles_done pulses together with the last tile_done.
+// the same cycle. The next tile's first slice reaches the array inputs in that
+// cycle too; see the timing contract in drain.sv. all_tiles_done pulses
+// together with the last tile_done.
 //
 // start is ignored while a matmul is running. rows_total, inner_dim,
 // cols_total, row_tiles, col_tiles and both bases must hold from start until
@@ -39,6 +42,8 @@ module matmul_stream_controller #(
     parameter  int INNER_DIM_MAX  = vit_config_pkg::INNER_DIM_MAX,
     parameter  int COLS_TOTAL_MAX = vit_config_pkg::COLS_TOTAL_MAX,
     parameter  int BANK_DEPTH     = vit_config_pkg::BANK_DEPTH,
+    parameter  int READ_LATENCY        = vit_config_pkg::BUFFER_READ_LATENCY,
+    parameter  int ARRAY_INPUT_LATENCY = 0,
     localparam int ROWS_WIDTH     = $clog2(ROWS_TOTAL_MAX + 1),
     localparam int INNER_WIDTH    = $clog2(INNER_DIM_MAX + 1),
     localparam int COLS_WIDTH     = $clog2(COLS_TOTAL_MAX + 1),
@@ -141,7 +146,8 @@ module matmul_stream_controller #(
         end
     end
 
-    // data stage: one cycle behind the addresses, lined up with buffer read data
+    // data stage: READ_LATENCY cycles behind the addresses, lined up with the
+    // buffer read data
     logic [SYS_ROW-1:0] activation_lane_in_range;
     logic [SYS_COL-1:0] weight_lane_in_range;
 
@@ -154,36 +160,66 @@ module matmul_stream_controller #(
         end
     end
 
-    logic                  end_of_tile_delayed;
-    logic                  last_tile_delayed;
-    logic [ROWS_WIDTH-1:0] tile_row_delayed;
-    logic [COLS_WIDTH-1:0] tile_col_delayed;
+    logic [READ_LATENCY-1:0][SYS_ROW-1:0] activation_enable_pipeline;
+    logic [READ_LATENCY-1:0][SYS_COL-1:0] weight_enable_pipeline;
+    logic [READ_LATENCY-1:0]              first_k_pipeline;
 
     always_ff @(posedge CLK) begin
         if (reset) begin
-            activation_lane_enable <= '0;
-            weight_lane_enable     <= '0;
-            first_k_out            <= 1'b0;
-            end_of_tile_delayed    <= 1'b0;
-            last_tile_delayed      <= 1'b0;
-            tile_done              <= 1'b0;
-            all_tiles_done         <= 1'b0;
+            activation_enable_pipeline <= '0;
+            weight_enable_pipeline     <= '0;
+            first_k_pipeline           <= '0;
         end
         else begin
-            activation_lane_enable <= (busy && streaming) ? activation_lane_in_range : '0;
-            weight_lane_enable     <= (busy && streaming) ? weight_lane_in_range : '0;
-            first_k_out            <= busy && cycle_count == '0;
-
-            // the accumulators are final two cycles after the last flush address cycle
-            end_of_tile_delayed <= busy && end_of_tile;
-            last_tile_delayed   <= busy && end_of_tile && last_col_tile && last_row_tile;
-            tile_done           <= end_of_tile_delayed;
-            all_tiles_done      <= last_tile_delayed;
+            activation_enable_pipeline[0] <= (busy && streaming) ? activation_lane_in_range : '0;
+            weight_enable_pipeline[0]     <= (busy && streaming) ? weight_lane_in_range : '0;
+            first_k_pipeline[0]           <= busy && cycle_count == '0;
+            for (int stage = 1; stage < READ_LATENCY; stage++) begin
+                activation_enable_pipeline[stage] <= activation_enable_pipeline[stage-1];
+                weight_enable_pipeline[stage]     <= weight_enable_pipeline[stage-1];
+                first_k_pipeline[stage]           <= first_k_pipeline[stage-1];
+            end
         end
-        tile_row_delayed <= tile_row_count;
-        tile_col_delayed <= tile_col_count;
-        tile_row         <= tile_row_delayed;
-        tile_col         <= tile_col_delayed;
     end
+
+    assign activation_lane_enable = activation_enable_pipeline[READ_LATENCY-1];
+    assign weight_lane_enable     = weight_enable_pipeline[READ_LATENCY-1];
+    assign first_k_out            = first_k_pipeline[READ_LATENCY-1];
+
+    // The last slice of a tile is at the array inputs READ_LATENCY +
+    // ARRAY_INPUT_LATENCY cycles after its address, and the flush was counted
+    // from the address, so the accumulators are final one cycle after that.
+    localparam int DONE_DELAY = READ_LATENCY + ARRAY_INPUT_LATENCY + 1;
+
+    logic [DONE_DELAY-1:0]                 tile_done_pipeline;
+    logic [DONE_DELAY-1:0]                 all_tiles_done_pipeline;
+    logic [DONE_DELAY-1:0][ROWS_WIDTH-1:0] tile_row_pipeline;
+    logic [DONE_DELAY-1:0][COLS_WIDTH-1:0] tile_col_pipeline;
+
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            tile_done_pipeline      <= '0;
+            all_tiles_done_pipeline <= '0;
+        end
+        else begin
+            tile_done_pipeline[0]      <= busy && end_of_tile;
+            all_tiles_done_pipeline[0] <= busy && end_of_tile && last_col_tile && last_row_tile;
+            for (int stage = 1; stage < DONE_DELAY; stage++) begin
+                tile_done_pipeline[stage]      <= tile_done_pipeline[stage-1];
+                all_tiles_done_pipeline[stage] <= all_tiles_done_pipeline[stage-1];
+            end
+        end
+        tile_row_pipeline[0] <= tile_row_count;
+        tile_col_pipeline[0] <= tile_col_count;
+        for (int stage = 1; stage < DONE_DELAY; stage++) begin
+            tile_row_pipeline[stage] <= tile_row_pipeline[stage-1];
+            tile_col_pipeline[stage] <= tile_col_pipeline[stage-1];
+        end
+    end
+
+    assign tile_done      = tile_done_pipeline[DONE_DELAY-1];
+    assign all_tiles_done = all_tiles_done_pipeline[DONE_DELAY-1];
+    assign tile_row       = tile_row_pipeline[DONE_DELAY-1];
+    assign tile_col       = tile_col_pipeline[DONE_DELAY-1];
 
 endmodule
