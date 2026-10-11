@@ -51,7 +51,10 @@
 // stay in use for the whole drain, so the next tile_done must come at least
 // SYS_ROW cycles later in row-select and SYS_COL cycles later in column-select.
 // The controller's tile period, inner_dim + SYS_ROW + SYS_COL - 2, always
-// meets that. A write appears two cycles after its read step. drain_mode,
+// meets that. A write appears 2 + vit_config_pkg::REQUANTIZE_LATENCY = 6
+// cycles after its read step: select register, biased-accumulator register,
+// then the requantizer. The write address is worked out over two cycles
+// (tile index times output_stride, then the adds). drain_mode,
 // bias_enable, rows_total, cols_total, output_base, output_stride, scale and
 // shift_value must hold until drain_busy is low after the last tile.
 //////////////////////////////////////////////////////////////////////////////////
@@ -131,7 +134,6 @@ module drain #(
     // tile context, sampled at tile_done and used from the next cycle on
     logic [ROW_INDEX_WIDTH-1:0]             row_base;       // global row of tile row 0
     logic [COL_INDEX_WIDTH-1:0]             col_base;       // global column of tile column 0
-    logic [ADDRESS_WIDTH-1:0]               start_address;  // write address of step 0
     logic [SYS_COL-1:0][ACC_WIDTH-1:0]      bias_latched;
 
     logic [ADDRESS_WIDTH-1:0] bank_row_index;  // which stored row of the bank
@@ -150,10 +152,33 @@ module drain #(
 
     always_ff @(posedge CLK) begin
         if (tile_done) begin
-            row_base      <= ROW_INDEX_WIDTH'(tile_row) * ROW_INDEX_WIDTH'(SYS_ROW);
-            col_base      <= COL_INDEX_WIDTH'(tile_col) * COL_INDEX_WIDTH'(SYS_COL);
-            start_address <= output_base + bank_row_index * output_stride + first_step_offset;
-            bias_latched  <= bias_in;
+            row_base     <= ROW_INDEX_WIDTH'(tile_row) * ROW_INDEX_WIDTH'(SYS_ROW);
+            col_base     <= COL_INDEX_WIDTH'(tile_col) * COL_INDEX_WIDTH'(SYS_COL);
+            bias_latched <= bias_in;
+        end
+    end
+
+    // write address of step 0, in two cycles: the product and the offset one
+    // cycle after tile_done, their sum one cycle later. The first use is the
+    // cycle after that.
+    logic                     tile_done_delayed;
+    logic [ADDRESS_WIDTH-1:0] address_product;
+    logic [ADDRESS_WIDTH-1:0] address_offset;
+    logic [ADDRESS_WIDTH-1:0] start_address;
+
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            tile_done_delayed <= 1'b0;
+        end
+        else begin
+            tile_done_delayed <= tile_done;
+        end
+        if (tile_done) begin
+            address_product <= bank_row_index * output_stride;
+            address_offset  <= output_base + first_step_offset;
+        end
+        if (tile_done_delayed) begin
+            start_address <= address_product + address_offset;
         end
     end
 
@@ -229,11 +254,38 @@ module drain #(
         end
     end
 
-    // stage 2: requantize; valid_out is the registered lane write enable
+    // stage 2: register the biased accumulator and the lane write enables
+    logic [LANES-1:0][ACC_WIDTH-1:0] biased_accumulator_reg;
+    logic [LANES-1:0]                lane_write_reg;
+    logic [STEP_WIDTH-1:0]           biased_step;
+
     always_ff @(posedge CLK) begin
-        write_address <= start_address + ADDRESS_WIDTH'(stage_step);
+        if (reset) begin
+            lane_write_reg <= '0;
+        end
+        else begin
+            lane_write_reg <= lane_write;
+        end
+        biased_accumulator_reg <= biased_accumulator;
+        biased_step            <= stage_step;
     end
 
+    // write address: start_address + step, then delayed to line up with the
+    // requantizer output
+    localparam int REQUANTIZE_LATENCY = vit_config_pkg::REQUANTIZE_LATENCY;
+
+    logic [REQUANTIZE_LATENCY-1:0][ADDRESS_WIDTH-1:0] address_pipeline;
+
+    always_ff @(posedge CLK) begin
+        address_pipeline[0] <= start_address + ADDRESS_WIDTH'(biased_step);
+        for (int stage = 1; stage < REQUANTIZE_LATENCY; stage++) begin
+            address_pipeline[stage] <= address_pipeline[stage-1];
+        end
+    end
+
+    assign write_address = address_pipeline[REQUANTIZE_LATENCY-1];
+
+    // requantize; valid_out is the lane write enable
     genvar lane;
     generate
         for (lane = 0; lane < LANES; lane++) begin: lane_requantize
@@ -244,8 +296,8 @@ module drain #(
                 .SHIFT_WIDTH (SHIFT_WIDTH)
             ) requantize_inst (
                 .CLK                (CLK),
-                .valid_in           (lane_write[lane]),
-                .unquantized_result (biased_accumulator[lane]),
+                .valid_in           (lane_write_reg[lane]),
+                .unquantized_result (biased_accumulator_reg[lane]),
                 .scale              (scale),
                 .shift_value        (shift_value),
                 .valid_out          (write_enable[lane]),
@@ -254,6 +306,21 @@ module drain #(
         end
     endgenerate
 
-    assign drain_busy = step_valid || stage_valid || (|write_enable);
+    // busy from the first read step until the last step has left the pipeline,
+    // whether or not that step writes anything
+    localparam int DRAIN_LATENCY = 2 + REQUANTIZE_LATENCY;
+
+    logic [DRAIN_LATENCY-1:0] activity;
+
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            activity <= '0;
+        end
+        else begin
+            activity <= {activity[DRAIN_LATENCY-2:0], step_valid};
+        end
+    end
+
+    assign drain_busy = step_valid || (|activity);
 
 endmodule

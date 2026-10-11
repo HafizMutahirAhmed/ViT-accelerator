@@ -45,6 +45,10 @@ package vit_config_pkg;
     // read, block RAM output register, register after the cascade multiplexer
     parameter  BUFFER_READ_LATENCY = 3;
 
+    // cycles from the requantize inputs to its result: operand, product,
+    // product hold and shifted-value registers
+    parameter  REQUANTIZE_LATENCY = 4;
+
     // drain_mode values
     parameter  DRAIN_ROW_SELECT    = 1'b0;  // one accumulator row per cycle, to column banks
     parameter  DRAIN_COLUMN_SELECT = 1'b1;  // one accumulator column per cycle, to row banks

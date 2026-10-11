@@ -22,9 +22,16 @@
 // unquantized_result is a signed ACC_WIDTH integer and scale a signed
 // SCALE_WIDTH integer; the product keeps all ACC_WIDTH + SCALE_WIDTH bits. The
 // shift is arithmetic (floor, no rounding offset) and the result saturates to
-// a signed DATA_WIDTH integer. The multiply is registered, so the result and
-// valid_out come one cycle after the inputs and valid_in.
+// a signed DATA_WIDTH integer.
+//
+// The datapath is pipelined for the DSP48E1 registers: operand registers, the
+// product register, a second product register and a register on the shifted
+// value. The clip after it is combinational. quantized_result and valid_out
+// come vit_config_pkg::REQUANTIZE_LATENCY = 4 cycles after the inputs and
+// valid_in. shift_value is sampled one cycle before the shift and is expected
+// to be constant while results are in flight.
 
+(* use_dsp = "yes" *)
 module requantize #(
     parameter int DATA_WIDTH  = vit_config_pkg::DATA_WIDTH,
     parameter int ACC_WIDTH   = vit_config_pkg::ACC_WIDTH,
@@ -40,20 +47,30 @@ module requantize #(
     output logic signed [DATA_WIDTH-1:0]         quantized_result
 );
 
+    localparam int LATENCY = vit_config_pkg::REQUANTIZE_LATENCY;
+
     localparam signed [(ACC_WIDTH + SCALE_WIDTH)-1:0] MAX_VAL =  (1 << (DATA_WIDTH-1)) - 1;  
     localparam signed [(ACC_WIDTH + SCALE_WIDTH)-1:0] MIN_VAL = -(1 << (DATA_WIDTH-1));      
 
+    logic signed [ACC_WIDTH-1:0]                 unquantized_operand;
+    logic signed [SCALE_WIDTH-1:0]               scale_operand;
+    logic signed [(ACC_WIDTH + SCALE_WIDTH)-1:0] product;
     logic signed [(ACC_WIDTH + SCALE_WIDTH)-1:0] mult_reg;  
+    logic signed [(ACC_WIDTH + SCALE_WIDTH)-1:0] shifted_val;
     logic [SHIFT_WIDTH-1:0]                      shift_value_reg;
+    logic [LATENCY-1:0]                          valid_pipeline;
 
     always_ff @(posedge CLK) begin
-        mult_reg        <= unquantized_result * scale;
-        shift_value_reg <= shift_value; 
-        valid_out       <= valid_in;
+        unquantized_operand <= unquantized_result;
+        scale_operand       <= scale;
+        product             <= unquantized_operand * scale_operand;
+        mult_reg            <= product;
+        shift_value_reg     <= shift_value; 
+        shifted_val         <= mult_reg >>> shift_value_reg;
+        valid_pipeline      <= {valid_pipeline[LATENCY-2:0], valid_in};
     end
-    
-    logic signed [(ACC_WIDTH + SCALE_WIDTH)-1:0] shifted_val;
-    assign shifted_val = mult_reg >>> shift_value_reg;
+
+    assign valid_out = valid_pipeline[LATENCY-1];
     
     always_comb begin
         if (shifted_val > MAX_VAL) begin

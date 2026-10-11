@@ -2,9 +2,10 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Self-checking testbench for requantize.
 //
-// Applies every (acc, scale, shift) vector, one per cycle, and compares the
-// output one cycle later with the golden INT8 result. valid_in is high on
-// every other vector and valid_out must follow it by one cycle.
+// Applies every (acc, scale, shift) vector, holds it for the requantizer's
+// LATENCY cycles and compares the output with the golden INT8 result.
+// valid_in is high on every other vector and valid_out must follow it by
+// LATENCY cycles.
 //
 // Vectors come from golden/gen_vectors.py:
 //   requant_cfg.hex    32-bit word: number of vectors
@@ -85,7 +86,7 @@ module tb_requantize #(
             unquantized_result = acc_mem[i];
             scale              = scale_mem[i];
             shift_value        = shift_mem[i][SHIFT_WIDTH-1:0];
-            @(negedge CLK);
+            repeat (dut.LATENCY) @(negedge CLK);
             if (quantized_result !== out_mem[i]) begin
                 if (first_mismatch < 0) begin
                     first_mismatch = i;
