@@ -75,3 +75,46 @@ def unpack_descriptor(words):
             value -= 1 << width
         values[name] = value
     return values
+
+
+# what each descriptor field means, for the table in docs/ENGINE.md
+DESCRIPTOR_FIELD_NOTES = {
+    "opcode": "Operation. 0 = MATMUL; any other value is skipped.",
+    "rows_total": "M, rows of the activation operand and of the result.",
+    "inner_dim": "K, the dimension summed over. At least 1.",
+    "cols_total": "N, columns of the weight operand and of the result.",
+    "row_tiles": "ceil(M / SYS_ROW), worked out by the host.",
+    "col_tiles": "ceil(N / SYS_COL), worked out by the host.",
+    "activation_buffer_id": "Pool buffer read as the activation operand (row banks).",
+    "weight_buffer_id": "Pool buffer read as the weight operand (column banks).",
+    "output_buffer_id": "Pool buffer the result is written to.",
+    "activation_base": "Address of the activation operand's first word in each bank.",
+    "weight_base": "Address of the weight operand's first word in each bank.",
+    "output_base": "Address of the result's first word in each bank.",
+    "output_stride": "Words per stored row of the result. N for column-select and M for "
+                     "row-select, or more to place the result inside a wider tensor.",
+    "bias_base": "Address in the bias store of the bias words for output columns 0 .. SYS_COL-1.",
+    "scale": "Requantizer multiplier, signed.",
+    "shift": "Requantizer right shift, arithmetic.",
+    "drain_mode": "0 = row-select (result in column banks), 1 = column-select (result in row banks).",
+    "bias_enable": "1 = add the bias before requantizing.",
+    "last_op": "1 = stop after this op and pulse done.",
+}
+
+
+def descriptor_markdown():
+    """The descriptor_t layout as a Markdown table, most significant field first."""
+    lines = ["| Field | Bits | Width | Meaning |", "|---|---|---|---|"]
+    position = PARAMS["DESCRIPTOR_WIDTH"]
+    for name, width, signed in DESCRIPTOR_FIELDS:
+        position -= width
+        bits = f"{position + width - 1}:{position}" if width > 1 else f"{position}"
+        kind = f"{width}, signed" if signed else f"{width}"
+        lines.append(f"| `{name}` | {bits} | {kind} | {DESCRIPTOR_FIELD_NOTES[name]} |")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    print(descriptor_markdown())
+    print(f"\n{PARAMS['DESCRIPTOR_WIDTH']} bits, stored in {PARAMS['DESCRIPTOR_WORDS']} 32-bit words "
+          f"({PARAMS['DESCRIPTOR_MEMORY_WIDTH']} bits).")

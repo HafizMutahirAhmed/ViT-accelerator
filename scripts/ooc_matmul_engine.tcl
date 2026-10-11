@@ -1,12 +1,13 @@
 # Out-of-context synthesis and implementation of matmul_engine.
 #
 # Usage: vivado -mode batch -source scripts/ooc_matmul_engine.tcl
-#        vivado -mode batch -source scripts/ooc_matmul_engine.tcl -tclargs <clock period ns>
+#        vivado -mode batch -source scripts/ooc_matmul_engine.tcl -tclargs <clock period ns> <array size>
 #
-# The part comes from ViT-implementation.xpr. The array size and everything
-# else are the package defaults; the pool buffer depths are the real build's
-# (buffer_depths below). Reports and the routed checkpoint go to
-# sim/ooc_matmul_engine/ (gitignored):
+# The part comes from ViT-implementation.xpr. The array is square, 8x8 unless
+# an array size is given; everything else is the package default. The pool
+# buffer depths are the real build's (buffer_depths below). Reports and the
+# routed checkpoint go to sim/ooc_matmul_engine/, or
+# sim/ooc_matmul_engine_<size>x<size>/ for another size (gitignored):
 #   timing_summary.rpt, timing_worst10.rpt, worst_paths.txt
 #   worst_by_kind.txt              worst path between each pair of modules
 #   utilization.rpt, utilization_hier.rpt
@@ -15,23 +16,37 @@
 
 set script_dir [file dirname [file normalize [info script]]]
 set repo_dir   [file dirname $script_dir]
-set out_dir    [file join $repo_dir sim ooc_matmul_engine]
-file mkdir $out_dir
-
 set period 6.667
 if {[llength $argv] > 0} {
     set period [lindex $argv 0]
 }
+set size 8
+if {[llength $argv] > 1} {
+    set size [lindex $argv 1]
+}
+
+set out_dir [file join $repo_dir sim ooc_matmul_engine]
+if {$size != 8} {
+    append out_dir "_${size}x${size}"
+}
+file mkdir $out_dir
 
 set fh [open [file join $repo_dir ViT-implementation.xpr]]
 regexp {Option Name="Part" Val="([^"]+)"} [read $fh] -> part
 close $fh
-puts "ooc_matmul_engine: part $part, clock period $period ns"
+puts "ooc_matmul_engine: part $part, clock period $period ns, ${size}x${size} array"
 
-# Words per bank of pool buffers 0..7: one layer of weights (442,368 bytes in
-# 8 banks), one 197x768 activation buffer, three 197x197 buffers. The package
-# has 8 buffers; the three the real build does not need are kept tiny.
-set buffer_depths {55296 19200 4925 4925 4925 16 16 16}
+# Words per bank of pool buffers 0..7, for the same tensors at any array size:
+# one layer of weights (442,368 bytes spread over the banks), one 197x768
+# activation buffer, three 197x197 buffers. At 8x8 that is 55296, 19200 and
+# 4925. The package has 8 buffers; the three the real build does not need are
+# kept tiny.
+set token_tiles   [expr {(197 + $size - 1) / $size}]
+set weight_depth  [expr {(442368 + $size - 1) / $size}]
+set big_depth     [expr {$token_tiles * 768}]
+set small_depth   [expr {$token_tiles * 197}]
+set buffer_depths [list $weight_depth $big_depth $small_depth $small_depth $small_depth 16 16 16]
+puts "ooc_matmul_engine: buffer depths $buffer_depths"
 set depth_generic ""
 foreach depth [lreverse $buffer_depths] {
     append depth_generic [format %08x $depth]
@@ -131,7 +146,8 @@ foreach f [lsort [glob -directory $rtl_dir *.sv]] {
 }
 read_verilog -sv [concat $package $others]
 
-synth_design -top matmul_engine -part $part -mode out_of_context -generic "BUFFER_DEPTH=$depth_generic"
+synth_design -top matmul_engine -part $part -mode out_of_context \
+    -generic "SYS_ROW=$size" -generic "SYS_COL=$size" -generic "BUFFER_DEPTH=$depth_generic"
 create_clock -name CLK -period $period [get_ports CLK]
 report_dsps [file join $out_dir dsp_synth.txt]
 report_utilization -hierarchical -file [file join $out_dir utilization_hier_synth.rpt]

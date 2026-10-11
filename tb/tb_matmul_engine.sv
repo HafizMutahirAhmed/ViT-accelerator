@@ -18,7 +18,7 @@
 //   <case>_bias.hex  N    INT32  bias[col]
 //   <case>_Y.hex     M*N  INT8   requantized output
 //   <case>_desc_r<SYS_ROW>c<SYS_COL>_<row|col>.hex  descriptor_t, 32-bit words
-// Tables exist for 4x4 and 8x8 arrays.
+// Tables exist for 4x4, 8x8, 12x12 and 16x16 arrays.
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_matmul_engine #(

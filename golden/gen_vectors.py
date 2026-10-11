@@ -33,7 +33,7 @@ Chained attention head for tb_matmul_engine_chain, DeiT-Tiny dimensions
   attn_desc_r<R>c<C>.hex   five-op descriptor table (Q, K, V, S, O)
 
 Single output tile for tb_systolic_array, <case> = tile_r<R>c<C>_k<K> with
-R x C in 2x2, 4x4, 3x5 and K in 1, 3, 8, 197:
+R x C in 2x2, 4x4, 3x5, 12x12, 16x16 and K in 1, 3, 8, 197:
   <case>_A.hex      R*K  INT8   A[row][k]
   <case>_B.hex      K*C  INT8   B[k][col]
   <case>_C_acc.hex  R*C  INT32  A @ B, no bias
@@ -61,7 +61,7 @@ CFG_WIDTH = 32
 
 # array sizes the engine descriptor tables are generated for, and the bank
 # depth tb_matmul_engine gives every pool buffer
-ENGINE_ARRAYS = ((4, 4), (8, 8))
+ENGINE_ARRAYS = ((4, 4), (8, 8), (12, 12), (16, 16))
 ENGINE_TB_BANK_DEPTH = 16384
 
 
@@ -320,7 +320,7 @@ def gen_attention_chain():
 
 def gen_tile():
     count = 0
-    for rows, cols in ((2, 2), (4, 4), (3, 5)):
+    for rows, cols in ((2, 2), (4, 4), (3, 5), (12, 12), (16, 16)):
         for k_dim in (1, 3, 8, 197):
             case = f"tile_r{rows}c{cols}_k{k_dim}"
             rng = np.random.default_rng([20, rows, cols, k_dim])
@@ -332,7 +332,7 @@ def gen_tile():
             write_hex(path(f"{case}_C_acc.hex"), c, ACC_WIDTH)
             assert np.array_equal(read_hex(path(f"{case}_C_acc.hex"), ACC_WIDTH), c.reshape(-1))
             count += 1
-    print(f"{'tile':11s} {count} single-tile cases (2x2, 4x4, 3x5 arrays; K = 1, 3, 8, 197)")
+    print(f"{'tile':11s} {count} single-tile cases (2x2, 4x4, 3x5, 12x12, 16x16 arrays; K = 1, 3, 8, 197)")
 
 
 def gen_requant():

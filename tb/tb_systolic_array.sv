@@ -13,7 +13,7 @@
 //
 // The DUT is never reset and the cases run back to back, so the first case
 // starts from unknown register contents and the others from a stale tile.
-// Vectors exist for 2x2, 4x4 and 3x5 arrays.
+// Vectors exist for 2x2, 4x4, 3x5, 12x12 and 16x16 arrays.
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_systolic_array #(

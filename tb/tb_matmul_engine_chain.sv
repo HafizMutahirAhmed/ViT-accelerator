@@ -25,7 +25,7 @@
 //   attn_bias.hex   INT32  bias[col]
 //   attn_Q.hex, attn_K.hex, attn_V.hex, attn_S.hex, attn_O.hex   INT8
 //   attn_desc_r<SYS_ROW>c<SYS_COL>.hex   descriptor_t x 5, 32-bit words
-// Tables exist for 4x4 and 8x8 arrays.
+// Tables exist for 4x4, 8x8, 12x12 and 16x16 arrays.
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_matmul_engine_chain #(
