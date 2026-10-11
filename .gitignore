@@ -1,0 +1,26 @@
+# Vivado generated (managed by Vivado, never commit)
+*.cache/
+*.runs/
+*.gen/
+*.sim/
+*.hw/
+*.ip_user_files/
+.Xil/
+*.jou
+*.log
+*.str
+webtalk*
+
+# Simulation outputs
+sim/
+xsim.dir/
+*.wdb
+*.pb
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
