@@ -105,6 +105,8 @@ module tb_matmul_stream_controller #(
         .cols_total              (cols_total),
         .row_tiles               (row_tiles),
         .col_tiles               (col_tiles),
+        .activation_base         ('0),
+        .weight_base             ('0),
         .activation_read_address (activation_read_address),
         .weight_read_address     (weight_read_address),
         .activation_lane_enable  (activation_lane_enable),

@@ -42,4 +42,50 @@ package vit_config_pkg;
     parameter  DRAIN_ROW_SELECT    = 1'b0;  // one accumulator row per cycle, to column banks
     parameter  DRAIN_COLUMN_SELECT = 1'b1;  // one accumulator column per cycle, to row banks
 
+    // matmul_engine buffer pool, bias store and descriptor table
+    parameter  BUFFER_COUNT     = 8;
+    parameter  BANK_DEPTH_MAX   = 32768;  // deepest bank a descriptor base can address
+    parameter  BIAS_DEPTH       = 1024;   // bias words per column bank
+    parameter  DESCRIPTOR_COUNT = 64;
+
+    parameter  OPCODE_WIDTH       = 4;
+    parameter  ROWS_WIDTH         = $clog2(ROWS_TOTAL_MAX + 1);
+    parameter  INNER_WIDTH        = $clog2(INNER_DIM_MAX + 1);
+    parameter  COLS_WIDTH         = $clog2(COLS_TOTAL_MAX + 1);
+    parameter  BUFFER_ID_WIDTH    = $clog2(BUFFER_COUNT);
+    parameter  ADDRESS_WIDTH      = $clog2(BANK_DEPTH_MAX);
+    parameter  BIAS_ADDRESS_WIDTH = $clog2(BIAS_DEPTH);
+
+    parameter  OPCODE_MATMUL = 4'd0;
+
+    // One op of the engine. The first field is the most significant. In the
+    // descriptor memory the struct sits in the low DESCRIPTOR_WIDTH bits of a
+    // DESCRIPTOR_MEMORY_WIDTH word, which is split into 32-bit words with
+    // word 0 the least significant. golden/pkg_config.py reads this struct.
+    typedef struct packed {
+        logic [OPCODE_WIDTH-1:0]       opcode;
+        logic [ROWS_WIDTH-1:0]         rows_total;            // M
+        logic [INNER_WIDTH-1:0]        inner_dim;             // K
+        logic [COLS_WIDTH-1:0]         cols_total;            // N
+        logic [ROWS_WIDTH-1:0]         row_tiles;             // ceil(M / SYS_ROW)
+        logic [COLS_WIDTH-1:0]         col_tiles;             // ceil(N / SYS_COL)
+        logic [BUFFER_ID_WIDTH-1:0]    activation_buffer_id;
+        logic [BUFFER_ID_WIDTH-1:0]    weight_buffer_id;
+        logic [BUFFER_ID_WIDTH-1:0]    output_buffer_id;
+        logic [ADDRESS_WIDTH-1:0]      activation_base;
+        logic [ADDRESS_WIDTH-1:0]      weight_base;
+        logic [ADDRESS_WIDTH-1:0]      output_base;
+        logic [ADDRESS_WIDTH-1:0]      output_stride;         // words per stored row of an output bank
+        logic [BIAS_ADDRESS_WIDTH-1:0] bias_base;
+        logic signed [SCALE_WIDTH-1:0] scale;
+        logic [SHIFT_WIDTH-1:0]        shift;
+        logic                          drain_mode;
+        logic                          bias_enable;           // flag: add the bias at drain
+        logic                          last_op;               // flag: stop after this op
+    } descriptor_t;
+
+    parameter  DESCRIPTOR_WIDTH        = $bits(descriptor_t);
+    parameter  DESCRIPTOR_WORDS        = (DESCRIPTOR_WIDTH + 31) / 32;
+    parameter  DESCRIPTOR_MEMORY_WIDTH = 32 * DESCRIPTOR_WORDS;
+
 endpackage

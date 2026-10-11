@@ -7,19 +7,24 @@
 // drain_mode picks the read order and the output layout:
 //   DRAIN_ROW_SELECT     one accumulator row per cycle, SYS_ROW cycles. Lane c
 //                        is tile column c and goes to column bank c at address
-//                        tile_col * rows_total + global_row, the layout of a
+//                        output_base + tile_col * output_stride + global_row.
+//                        With output_stride = M this is the layout of a
 //                        weight-side operand whose inner dimension is M.
 //   DRAIN_COLUMN_SELECT  one accumulator column per cycle, SYS_COL cycles. Lane
 //                        r is tile row r and goes to row bank r at address
-//                        tile_row * cols_total + global_col, the layout of an
+//                        output_base + tile_row * output_stride + global_col.
+//                        With output_stride = N this is the layout of an
 //                        activation-side operand whose inner dimension is N.
 // All lanes share one write address. There are max(SYS_ROW, SYS_COL) lanes.
-// Rows and columns past the matrix edge are never written.
+// Rows and columns past the matrix edge are never written. A larger
+// output_stride with an output_base offset places the result inside a wider
+// stored tensor.
 //
 // Fixed point: accumulator_in and bias_in are signed ACC_WIDTH integers at the
 // same scale. Their sum wraps modulo 2**ACC_WIDTH. Each lane then goes through
 // requantize: clip((sum * scale) >>> shift_value) to a signed DATA_WIDTH
-// integer. bias_in[c] is the bias of tile column c.
+// integer. bias_in[c] is the bias of tile column c. With bias_enable low the
+// bias add is skipped and the accumulator goes to requantize unchanged.
 //
 // Timing contract. The array is not stalled and there is no snapshot of the
 // accumulators: the drain reads each one before the next tile overwrites it.
@@ -46,8 +51,8 @@
 // SYS_ROW cycles later in row-select and SYS_COL cycles later in column-select.
 // The controller's tile period, inner_dim + SYS_ROW + SYS_COL - 2, always
 // meets that. A write appears two cycles after its read step. drain_mode,
-// rows_total, cols_total, scale and shift_value must hold until drain_busy is
-// low after the last tile.
+// bias_enable, rows_total, cols_total, output_base, output_stride, scale and
+// shift_value must hold until drain_busy is low after the last tile.
 //////////////////////////////////////////////////////////////////////////////////
 
 module drain #(
@@ -68,11 +73,14 @@ module drain #(
     input  logic                                                  CLK,
     input  logic                                                  reset,
     input  logic                                                  drain_mode,
+    input  logic                                                  bias_enable,
     input  logic                                                  tile_done,
     input  logic [ROWS_WIDTH-1:0]                                 tile_row,
     input  logic [COLS_WIDTH-1:0]                                 tile_col,
     input  logic [ROWS_WIDTH-1:0]                                 rows_total,
     input  logic [COLS_WIDTH-1:0]                                 cols_total,
+    input  logic [ADDRESS_WIDTH-1:0]                              output_base,
+    input  logic [ADDRESS_WIDTH-1:0]                              output_stride,
     input  logic signed [SYS_ROW-1:0][SYS_COL-1:0][ACC_WIDTH-1:0] accumulator_in,
     input  logic signed [SYS_COL-1:0][ACC_WIDTH-1:0]              bias_in,
     input  logic signed [SCALE_WIDTH-1:0]                         scale,
@@ -126,18 +134,15 @@ module drain #(
     logic [SYS_COL-1:0][ACC_WIDTH-1:0]      bias_latched;
 
     logic [ADDRESS_WIDTH-1:0] bank_row_index;  // which stored row of the bank
-    logic [ADDRESS_WIDTH-1:0] bank_row_length;
     logic [ADDRESS_WIDTH-1:0] first_step_offset;
 
     always_comb begin
         if (drain_mode == DRAIN_COLUMN_SELECT) begin
             bank_row_index    = ADDRESS_WIDTH'(tile_row);
-            bank_row_length   = ADDRESS_WIDTH'(cols_total);
             first_step_offset = ADDRESS_WIDTH'(tile_col) * ADDRESS_WIDTH'(SYS_COL);
         end
         else begin
             bank_row_index    = ADDRESS_WIDTH'(tile_col);
-            bank_row_length   = ADDRESS_WIDTH'(rows_total);
             first_step_offset = ADDRESS_WIDTH'(tile_row) * ADDRESS_WIDTH'(SYS_ROW);
         end
     end
@@ -146,7 +151,7 @@ module drain #(
         if (tile_done) begin
             row_base      <= ROW_INDEX_WIDTH'(tile_row) * ROW_INDEX_WIDTH'(SYS_ROW);
             col_base      <= COL_INDEX_WIDTH'(tile_col) * COL_INDEX_WIDTH'(SYS_COL);
-            start_address <= bank_row_index * bank_row_length + first_step_offset;
+            start_address <= output_base + bank_row_index * output_stride + first_step_offset;
             bias_latched  <= bias_in;
         end
     end
@@ -202,11 +207,13 @@ module drain #(
 
         for (int lane = 0; lane < LANES; lane++) begin
             lane_bias[lane] = '0;
-            if (drain_mode == DRAIN_COLUMN_SELECT) begin
-                lane_bias[lane] = bias_latched[stage_step];
-            end
-            else if (lane < SYS_COL) begin
-                lane_bias[lane] = bias_latched[lane];
+            if (bias_enable) begin
+                if (drain_mode == DRAIN_COLUMN_SELECT) begin
+                    lane_bias[lane] = bias_latched[stage_step];
+                end
+                else if (lane < SYS_COL) begin
+                    lane_bias[lane] = bias_latched[lane];
+                end
             end
             biased_accumulator[lane] = stage_accumulator[lane] + lane_bias[lane];
         end

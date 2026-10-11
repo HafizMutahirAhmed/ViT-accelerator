@@ -7,8 +7,8 @@
 // Tiles are visited row tile outer, column tile inner. For every tile the
 // controller reads k = 0 .. inner_dim-1 from both buffers, then idles for
 // PIPELINE_LATENCY cycles so the array is fed zeros, then pulses tile_done.
-//   activation_read_address = tile_row * inner_dim + k
-//   weight_read_address     = tile_col * inner_dim + k
+//   activation_read_address = activation_base + tile_row * inner_dim + k
+//   weight_read_address     = weight_base     + tile_col * inner_dim + k
 //
 // Outputs come in two timing groups:
 //   - the read addresses, in the cycle the buffers are addressed;
@@ -26,7 +26,7 @@
 // all_tiles_done pulses together with the last tile_done.
 //
 // start is ignored while a matmul is running. rows_total, inner_dim,
-// cols_total, row_tiles and col_tiles must hold from start until
+// cols_total, row_tiles, col_tiles and both bases must hold from start until
 // all_tiles_done, with inner_dim >= 1, row_tiles = ceil(rows_total / SYS_ROW)
 // and col_tiles = ceil(cols_total / SYS_COL). Control data only, no arithmetic
 // on operands.
@@ -52,6 +52,8 @@ module matmul_stream_controller #(
     input  logic [COLS_WIDTH-1:0]    cols_total,
     input  logic [ROWS_WIDTH-1:0]    row_tiles,
     input  logic [COLS_WIDTH-1:0]    col_tiles,
+    input  logic [ADDRESS_WIDTH-1:0] activation_base,
+    input  logic [ADDRESS_WIDTH-1:0] weight_base,
     output logic [ADDRESS_WIDTH-1:0] activation_read_address,
     output logic [ADDRESS_WIDTH-1:0] weight_read_address,
     output logic [SYS_ROW-1:0]       activation_lane_enable,
@@ -101,9 +103,9 @@ module matmul_stream_controller #(
                 tile_col_count          <= '0;
                 row_base                <= '0;
                 col_base                <= '0;
-                activation_tile_base    <= '0;
-                activation_read_address <= '0;
-                weight_read_address     <= '0;
+                activation_tile_base    <= activation_base;
+                activation_read_address <= activation_base;
+                weight_read_address     <= weight_base;
             end
         end
         else begin
@@ -126,7 +128,7 @@ module matmul_stream_controller #(
                 else begin
                     tile_col_count          <= '0;
                     col_base                <= '0;
-                    weight_read_address     <= '0;
+                    weight_read_address     <= weight_base;
                     tile_row_count          <= tile_row_count + 1'b1;
                     row_base                <= row_base + ROW_INDEX_WIDTH'(SYS_ROW);
                     activation_tile_base    <= activation_tile_base + ADDRESS_WIDTH'(inner_dim);

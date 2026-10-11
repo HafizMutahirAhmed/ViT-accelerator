@@ -98,6 +98,7 @@ module tb_drain #(
     logic [ADDRESS_WIDTH-1:0]                output_write_address;
     logic signed [LANES-1:0][DATA_WIDTH-1:0] output_write_data;
     logic [LANES-1:0][ADDRESS_WIDTH-1:0]     output_write_address_lanes;
+    logic [ADDRESS_WIDTH-1:0]                output_stride;
     logic [ADDRESS_WIDTH-1:0]                output_read_address;
     logic [LANES-1:0][DATA_WIDTH-1:0]        output_read_data;
     logic                                    drain_busy;
@@ -152,6 +153,8 @@ module tb_drain #(
         .cols_total              (cols_total),
         .row_tiles               (row_tiles),
         .col_tiles               (col_tiles),
+        .activation_base         ('0),
+        .weight_base             ('0),
         .activation_read_address (activation_read_address),
         .weight_read_address     (weight_read_address),
         .activation_lane_enable  (activation_lane_enable),
@@ -192,11 +195,14 @@ module tb_drain #(
         .CLK            (CLK),
         .reset          (reset),
         .drain_mode     (drain_mode),
+        .bias_enable    (1'b1),
         .tile_done      (tile_done),
         .tile_row       (tile_row),
         .tile_col       (tile_col),
         .rows_total     (rows_total),
         .cols_total     (cols_total),
+        .output_base    ('0),
+        .output_stride  (output_stride),
         .accumulator_in (accumulator_out),
         .bias_in        (bias_read_data),
         .scale          (scale),
@@ -206,6 +212,9 @@ module tb_drain #(
         .write_data     (output_write_data),
         .drain_busy     (drain_busy)
     );
+
+    // the natural stride: one stored row is M long in row-select, N long in column-select
+    assign output_stride = (drain_mode == DRAIN_COLUMN_SELECT) ? ADDRESS_WIDTH'(cols_total) : ADDRESS_WIDTH'(rows_total);
 
     // one shared write address for every bank
     always_comb begin
