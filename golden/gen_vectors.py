@@ -13,6 +13,12 @@ Matmul cases, <case> = mm_small, mm_ragged, mm_extreme, mm_qkv:
   <case>_C_bias.hex M*N  INT32  A @ B + bias[n]: requantizer input
   <case>_Y.hex      M*N  INT8   requantized output
 
+Single output tile for tb_systolic_array, <case> = tile_r<R>c<C>_k<K> with
+R x C in 2x2, 4x4, 3x5 and K in 1, 3, 8, 197:
+  <case>_A.hex      R*K  INT8   A[row][k]
+  <case>_B.hex      K*C  INT8   B[k][col]
+  <case>_C_acc.hex  R*C  INT32  A @ B, no bias
+
 Requantizer on its own, vector i is one (acc, scale, shift) -> out:
   requant_cfg.hex    32-bit word: number of vectors
   requant_acc.hex    INT32
@@ -153,6 +159,23 @@ def gen_matmul():
     dump_matmul("mm_qkv", a, b, rand_bias(np.random.default_rng(14), a, b))
 
 
+def gen_tile():
+    count = 0
+    for rows, cols in ((2, 2), (4, 4), (3, 5)):
+        for k_dim in (1, 3, 8, 197):
+            case = f"tile_r{rows}c{cols}_k{k_dim}"
+            rng = np.random.default_rng([20, rows, cols, k_dim])
+            a, b = rand_int8(rng, (rows, k_dim)), rand_int8(rng, (k_dim, cols))
+            c = matmul_acc(a, b)
+            assert np.array_equal(c, ref_matmul(a, b)), f"{case}: matmul model mismatch"
+            write_hex(path(f"{case}_A.hex"), a, DATA_WIDTH)
+            write_hex(path(f"{case}_B.hex"), b, DATA_WIDTH)
+            write_hex(path(f"{case}_C_acc.hex"), c, ACC_WIDTH)
+            assert np.array_equal(read_hex(path(f"{case}_C_acc.hex"), ACC_WIDTH), c.reshape(-1))
+            count += 1
+    print(f"{'tile':11s} {count} single-tile cases (2x2, 4x4, 3x5 arrays; K = 1, 3, 8, 197)")
+
+
 def gen_requant():
     vecs = []
 
@@ -199,5 +222,6 @@ def gen_requant():
 if __name__ == "__main__":
     os.makedirs(VEC_DIR, exist_ok=True)
     gen_matmul()
+    gen_tile()
     gen_requant()
     print(f"wrote {len(os.listdir(VEC_DIR))} files to {VEC_DIR}")
