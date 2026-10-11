@@ -5,8 +5,12 @@
 #   e.g. scripts/sim.sh systolic_array SYS_ROW=3 SYS_COL=5
 #
 # Compiles rtl/vit_config_pkg.sv first, then every other rtl/*.sv and
-# tb/tb_<module>.sv, then runs tb_<module> from sim/. PARAM=value pairs
-# override testbench parameters.
+# tb/tb_<module>.sv, then runs tb_<module>. PARAM=value pairs override
+# testbench parameters.
+#
+# Every run works in its own directory, sim/<snapshot>/, so several runs can
+# go in parallel. sim/golden links to golden/, which keeps the testbenches'
+# "../golden/vectors/" paths valid from there.
 #
 # The output is also saved to sim/<snapshot>.log. The exit code is non-zero
 # when a tool fails or the log contains FAIL, a $fatal ("Fatal:") or ERROR.
@@ -33,10 +37,11 @@ for g in "$@"; do
     snapshot+=_${g//=/}
 done
 
-mkdir -p "$root/sim"
-cd "$root/sim"
+mkdir -p "$root/sim/$snapshot"
+ln -sfn ../golden "$root/sim/golden"
+cd "$root/sim/$snapshot"
 
-log=$snapshot.log
+log=../$snapshot.log
 status=0
 {
     xvlog -sv "$pkg" "${rtl[@]}" "$root/tb/tb_$mod.sv" &&
@@ -45,9 +50,9 @@ status=0
 } 2>&1 | tee "$log" || status=$?
 
 if grep -qE 'FAIL|Fatal|\$fatal|ERROR' "$log"; then
-    echo "sim.sh: FAIL, \$fatal or ERROR found in sim/$log" >&2
+    echo "sim.sh: FAIL, \$fatal or ERROR found in sim/$snapshot.log" >&2
     status=1
 elif [ "$status" -ne 0 ]; then
-    echo "sim.sh: a tool exited with status $status, see sim/$log" >&2
+    echo "sim.sh: a tool exited with status $status, see sim/$snapshot.log" >&2
 fi
 exit "$status"
