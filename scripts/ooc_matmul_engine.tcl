@@ -3,10 +3,12 @@
 # Usage: vivado -mode batch -source scripts/ooc_matmul_engine.tcl
 #        vivado -mode batch -source scripts/ooc_matmul_engine.tcl -tclargs <clock period ns>
 #
-# The part comes from ViT-implementation.xpr. The engine is built with its
-# package defaults. Reports and the routed checkpoint go to
+# The part comes from ViT-implementation.xpr. The array size and everything
+# else are the package defaults; the pool buffer depths are the real build's
+# (buffer_depths below). Reports and the routed checkpoint go to
 # sim/ooc_matmul_engine/ (gitignored):
 #   timing_summary.rpt, timing_worst10.rpt, worst_paths.txt
+#   worst_by_kind.txt              worst path between each pair of modules
 #   utilization.rpt, utilization_hier.rpt
 #   dsp_synth.txt, dsp_route.txt   one line per DSP48E1: registers and OPMODE
 #   memories.txt                   block RAM and LUT RAM cells by parent
@@ -25,6 +27,16 @@ set fh [open [file join $repo_dir ViT-implementation.xpr]]
 regexp {Option Name="Part" Val="([^"]+)"} [read $fh] -> part
 close $fh
 puts "ooc_matmul_engine: part $part, clock period $period ns"
+
+# Words per bank of pool buffers 0..7: one layer of weights (442,368 bytes in
+# 8 banks), one 197x768 activation buffer, three 197x197 buffers. The package
+# has 8 buffers; the three the real build does not need are kept tiny.
+set buffer_depths {55296 19200 4925 4925 4925 16 16 16}
+set depth_generic ""
+foreach depth [lreverse $buffer_depths] {
+    append depth_generic [format %08x $depth]
+}
+set depth_generic "[expr {32 * [llength $buffer_depths]}]'h$depth_generic"
 
 # one line per DSP48E1: register attributes and whether each OPMODE bit is a
 # constant or a signal
@@ -48,6 +60,48 @@ proc report_dsps {file_name} {
         puts $fh "$cell [get_property AREG $cell] [get_property BREG $cell] [get_property CREG $cell]\
 [get_property MREG $cell] [get_property PREG $cell] [get_property OPMODEREG $cell]\
 [get_property USE_MULT $cell] $opmode"
+    }
+    close $fh
+}
+
+# worst path between every pair of module groups, most negative first
+proc report_worst_by_kind {file_name} {
+    set groups {
+        array      array/*
+        requantize drain_inst/lane_requantize*
+        drain      drain_inst/*
+        controller controller/*
+        pool       pool*
+        bias_store bias_store/*
+        top        *
+    }
+    # each cell goes to the first group whose pattern it matches
+    array set members {}
+    set taken {}
+    foreach {name pattern} $groups {
+        set cells {}
+        foreach cell [get_cells -quiet -hierarchical -filter "NAME =~ $pattern && IS_PRIMITIVE && (IS_SEQUENTIAL || REF_NAME =~ RAMB* || REF_NAME == DSP48E1)"] {
+            if {![dict exists $taken $cell]} {
+                lappend cells $cell
+                dict set taken $cell 1
+            }
+        }
+        set members($name) $cells
+    }
+    set rows {}
+    foreach {from _} $groups {
+        foreach {to _} $groups {
+            if {[llength $members($from)] == 0 || [llength $members($to)] == 0} continue
+            set path [get_timing_paths -quiet -max_paths 1 -from $members($from) -to $members($to)]
+            if {$path eq ""} continue
+            lappend rows [list [get_property SLACK $path] "$from -> $to | slack [get_property SLACK $path]\
+| levels [get_property LOGIC_LEVELS $path] | delay [get_property DATAPATH_DELAY $path]\
+| [get_property STARTPOINT_PIN $path] -> [get_property ENDPOINT_PIN $path]"]
+        }
+    }
+    set fh [open $file_name w]
+    foreach row [lsort -real -index 0 $rows] {
+        puts $fh [lindex $row 1]
     }
     close $fh
 }
@@ -77,7 +131,7 @@ foreach f [lsort [glob -directory $rtl_dir *.sv]] {
 }
 read_verilog -sv [concat $package $others]
 
-synth_design -top matmul_engine -part $part -mode out_of_context
+synth_design -top matmul_engine -part $part -mode out_of_context -generic "BUFFER_DEPTH=$depth_generic"
 create_clock -name CLK -period $period [get_ports CLK]
 report_dsps [file join $out_dir dsp_synth.txt]
 report_utilization -hierarchical -file [file join $out_dir utilization_hier_synth.rpt]
@@ -93,6 +147,7 @@ report_utilization -file [file join $out_dir utilization.rpt]
 report_utilization -hierarchical -file [file join $out_dir utilization_hier.rpt]
 report_dsps [file join $out_dir dsp_route.txt]
 report_memories [file join $out_dir memories.txt]
+report_worst_by_kind [file join $out_dir worst_by_kind.txt]
 
 set fh [open [file join $out_dir worst_paths.txt] w]
 puts $fh "slack_ns levels datapath_ns startpoint -> endpoint"
@@ -103,4 +158,5 @@ foreach path [get_timing_paths -max_paths 10 -nworst 1 -sort_by slack] {
 close $fh
 
 write_checkpoint -force [file join $out_dir matmul_engine_routed.dcp]
-puts "ooc_matmul_engine: WNS [get_property SLACK [get_timing_paths -max_paths 1]] ns, reports in $out_dir"
+set wns [get_property SLACK [get_timing_paths -max_paths 1]]
+puts "ooc_matmul_engine: WNS $wns ns, estimated Fmax [format %.1f [expr {1000.0 / ($period - $wns)}]] MHz, reports in $out_dir"
