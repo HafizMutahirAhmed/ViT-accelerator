@@ -30,4 +30,12 @@ package vit_config_pkg;
     parameter  SYS_ROW = 8;
     parameter  SYS_COL = 8;
 
+    // largest matmul the stream controller is sized for: (M x K) @ (K x N)
+    parameter  ROWS_TOTAL_MAX = 197;
+    parameter  INNER_DIM_MAX  = 768;
+    parameter  COLS_TOTAL_MAX = 768;
+
+    // words per operand buffer bank
+    parameter  BANK_DEPTH = 4096;
+
 endpackage
