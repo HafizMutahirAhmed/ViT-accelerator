@@ -38,4 +38,8 @@ package vit_config_pkg;
     // words per operand buffer bank
     parameter  BANK_DEPTH = 4096;
 
+    // drain_mode values
+    parameter  DRAIN_ROW_SELECT    = 1'b0;  // one accumulator row per cycle, to column banks
+    parameter  DRAIN_COLUMN_SELECT = 1'b1;  // one accumulator column per cycle, to row banks
+
 endpackage
