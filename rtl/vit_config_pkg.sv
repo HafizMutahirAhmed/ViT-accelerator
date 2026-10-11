@@ -30,6 +30,9 @@ package vit_config_pkg;
     parameter  SYS_ROW = 8;
     parameter  SYS_COL = 8;
 
+    // register stages inside a pe before its accumulator: operand, product
+    parameter  DSP_LATENCY = 2;
+
     // largest matmul the stream controller is sized for: (M x K) @ (K x N)
     parameter  ROWS_TOTAL_MAX = 197;
     parameter  INNER_DIM_MAX  = 768;

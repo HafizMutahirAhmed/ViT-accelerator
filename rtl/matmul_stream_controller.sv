@@ -66,7 +66,7 @@ module matmul_stream_controller #(
 );
 
     // must match systolic_array.PIPELINE_LATENCY
-    localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2;
+    localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2 + vit_config_pkg::DSP_LATENCY;
 
     localparam int CYCLE_WIDTH     = $clog2(INNER_DIM_MAX + PIPELINE_LATENCY + 1);
     localparam int ROW_INDEX_WIDTH = $clog2(ROWS_TOTAL_MAX + SYS_ROW + 1);

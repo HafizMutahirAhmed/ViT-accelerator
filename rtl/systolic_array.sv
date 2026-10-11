@@ -11,7 +11,8 @@
 // weight_in[col], with first_k_in high on the first slice of a tile. The skew
 // modules delay row i by i cycles and column j by j cycles, so pe(row, col)
 // sees slice k at cycle k + row + col. first_k travels down column 0 and along
-// every row, which gives it the same row + col delay.
+// every row, which gives it the same row + col delay. Inside the pe the
+// operands take DSP_LATENCY more cycles to reach the accumulator.
 //
 // After the last slice, feed zeros with first_k_in low for PIPELINE_LATENCY
 // cycles; all accumulators are then final and hold while zeros keep coming.
@@ -32,7 +33,7 @@ module systolic_array #(
 );
 
     // cycles from the last k slice at the inputs to the last accumulator update
-    localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2;
+    localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2 + vit_config_pkg::DSP_LATENCY;
 
     logic [SYS_ROW-1:0][DATA_WIDTH-1:0] activation_skewed;
     logic [SYS_COL-1:0][DATA_WIDTH-1:0] weight_skewed;

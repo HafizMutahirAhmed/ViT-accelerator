@@ -46,7 +46,7 @@ module tb_matmul_engine_deit #(
     localparam int DESCRIPTOR_INDEX_WIDTH  = $clog2(DESCRIPTOR_COUNT);
 
     localparam int LANES            = (SYS_ROW > SYS_COL) ? SYS_ROW : SYS_COL;
-    localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2;
+    localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2 + vit_config_pkg::DSP_LATENCY;
 
     // must match BANK_DEPTH in golden/gen_deit_vectors.py
     localparam int BUFFER_DEPTH = vit_config_pkg::BANK_DEPTH_MAX;
