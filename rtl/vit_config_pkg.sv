@@ -63,7 +63,7 @@ package vit_config_pkg;
     parameter  BUFFER_COUNT     = 8;
     parameter  BANK_DEPTH_MAX   = 131072; // deepest bank a descriptor base can address
     parameter  BIAS_DEPTH       = 1024;   // bias words per column bank
-    parameter  DESCRIPTOR_COUNT = 64;
+    parameter  DESCRIPTOR_COUNT = 256;
 
     parameter  OPCODE_WIDTH       = 4;
     parameter  ROWS_WIDTH         = $clog2(ROWS_TOTAL_MAX + 1);
