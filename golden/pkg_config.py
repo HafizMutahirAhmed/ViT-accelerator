@@ -62,3 +62,16 @@ def pack_descriptor(**values):
             raise ValueError(f"descriptor field {name}={value} does not fit {width} bits")
         packed = (packed << width) | (value & ((1 << width) - 1))
     return [(packed >> (32 * i)) & 0xFFFFFFFF for i in range(PARAMS["DESCRIPTOR_WORDS"])]
+
+
+def unpack_descriptor(words):
+    """The inverse of pack_descriptor: 32-bit words, word 0 least significant, to a dict."""
+    packed = sum(int(word) << (32 * i) for i, word in enumerate(words))
+    values, position = {}, PARAMS["DESCRIPTOR_WIDTH"]
+    for name, width, signed in DESCRIPTOR_FIELDS:
+        position -= width
+        value = (packed >> position) & ((1 << width) - 1)
+        if signed and value >> (width - 1):
+            value -= 1 << width
+        values[name] = value
+    return values
