@@ -5,12 +5,13 @@ Usage: python3 golden/cycle_model.py [sim/sim_matmul_engine_deit.log]
 For one op on an S_ROW x S_COL array:
   cycles   = tiles * (K + S_ROW + S_COL - 2 + DSP_LATENCY) + overhead
   tiles    = ceil(M / S_ROW) * ceil(N / S_COL)
-  overhead = 3                         descriptor fetch, load, launch
+  overhead = 4                         descriptor fetch, load, apply, launch
            + BUFFER_READ_LATENCY + 2   last read address to tile_done: buffer
                                        read, array input register, last accumulate
            + steps                     drain read steps: S_ROW in row-select,
                                        S_COL in column-select
            + 2 + REQUANTIZE_LATENCY    drain pipeline
+           + POOL_WRITE_LATENCY        pool write register
 The latencies come from rtl/vit_config_pkg.sv. The ops are the real DeiT-Tiny
 ops listed in golden/vectors/deit/deit_ops.txt.
 """
@@ -29,7 +30,8 @@ def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
     tiles = -(-rows // sys_row) * -(-cols // sys_col)
     flush = sys_row + sys_col - 2 + PARAMS["DSP_LATENCY"]
     steps = sys_col if column_select else sys_row
-    overhead = 3 + PARAMS["BUFFER_READ_LATENCY"] + 2 + steps + 2 + PARAMS["REQUANTIZE_LATENCY"]
+    overhead = (4 + PARAMS["BUFFER_READ_LATENCY"] + 2 + steps + 2 + PARAMS["REQUANTIZE_LATENCY"]
+                + PARAMS["POOL_WRITE_LATENCY"])
     return tiles * (inner + flush) + overhead, tiles, tiles * flush, rows * inner * cols / (sys_row * sys_col)
 
 
@@ -57,7 +59,8 @@ def main():
 
     sys_row, sys_col = PARAMS["SYS_ROW"], PARAMS["SYS_COL"]
     print(f"model at {sys_row}x{sys_col}: DSP_LATENCY {PARAMS['DSP_LATENCY']}, BUFFER_READ_LATENCY "
-          f"{PARAMS['BUFFER_READ_LATENCY']}, REQUANTIZE_LATENCY {PARAMS['REQUANTIZE_LATENCY']}")
+          f"{PARAMS['BUFFER_READ_LATENCY']}, REQUANTIZE_LATENCY {PARAMS['REQUANTIZE_LATENCY']}, "
+          f"POOL_WRITE_LATENCY {PARAMS['POOL_WRITE_LATENCY']}")
     print(f"{'op':10s} {'shape':>16s} {'tiles':>6s} {'model':>8s} {'sim':>8s}  match")
     mismatches = 0
     for name, _group, rows, inner, cols, column_select in ops:
