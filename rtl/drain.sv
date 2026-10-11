@@ -53,7 +53,9 @@
 // The controller's tile period, inner_dim + SYS_ROW + SYS_COL - 2, always
 // meets that. A write appears 2 + vit_config_pkg::REQUANTIZE_LATENCY = 6
 // cycles after its read step: select register, biased-accumulator register,
-// then the requantizer. The write address is worked out over two cycles
+// then the requantizer. WRITE_LATENCY is the number of register stages the
+// user puts between the write outputs and the memory; drain_busy stays high
+// until the last write has passed them. The write address is worked out over two cycles
 // (tile index times output_stride, then the adds). drain_mode,
 // bias_enable, rows_total, cols_total, output_base, output_stride, scale and
 // shift_value must hold until drain_busy is low after the last tile.
@@ -69,6 +71,7 @@ module drain #(
     parameter  int ROWS_TOTAL_MAX = vit_config_pkg::ROWS_TOTAL_MAX,
     parameter  int COLS_TOTAL_MAX = vit_config_pkg::COLS_TOTAL_MAX,
     parameter  int BANK_DEPTH     = vit_config_pkg::BANK_DEPTH,
+    parameter  int WRITE_LATENCY  = 0,
     localparam int LANES          = (SYS_ROW > SYS_COL) ? SYS_ROW : SYS_COL,
     localparam int ROWS_WIDTH     = $clog2(ROWS_TOTAL_MAX + 1),
     localparam int COLS_WIDTH     = $clog2(COLS_TOTAL_MAX + 1),
@@ -306,9 +309,9 @@ module drain #(
         end
     endgenerate
 
-    // busy from the first read step until the last step has left the pipeline,
-    // whether or not that step writes anything
-    localparam int DRAIN_LATENCY = 2 + REQUANTIZE_LATENCY;
+    // busy from the first read step until the last step has left the pipeline
+    // and the write stages after it, whether or not that step writes anything
+    localparam int DRAIN_LATENCY = 2 + REQUANTIZE_LATENCY + WRITE_LATENCY;
 
     logic [DRAIN_LATENCY-1:0] activity;
 

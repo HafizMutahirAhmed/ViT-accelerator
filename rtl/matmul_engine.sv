@@ -33,7 +33,8 @@
 // (host_buffer_id, host_address, one write enable per bank), the bias store
 // (host_address, one write enable per column bank) and the descriptor memory
 // (host_descriptor_index, one write enable per 32-bit word, word 0 least
-// significant). Read data is valid vit_config_pkg::BUFFER_READ_LATENCY cycles
+// significant). A pool write lands vit_config_pkg::POOL_WRITE_LATENCY cycles
+// after it is presented. Read data is valid vit_config_pkg::BUFFER_READ_LATENCY cycles
 // after the address. While busy is high host writes are ignored and the read
 // data is not meaningful.
 //
@@ -85,6 +86,7 @@ module matmul_engine #(
     localparam int BIAS_DEPTH              = vit_config_pkg::BIAS_DEPTH;
     localparam int BIAS_ADDRESS_WIDTH      = vit_config_pkg::BIAS_ADDRESS_WIDTH;
     localparam int BUFFER_READ_LATENCY     = vit_config_pkg::BUFFER_READ_LATENCY;
+    localparam int POOL_WRITE_LATENCY      = vit_config_pkg::POOL_WRITE_LATENCY;
     localparam int DESCRIPTOR_COUNT        = vit_config_pkg::DESCRIPTOR_COUNT;
     localparam int DESCRIPTOR_WIDTH        = vit_config_pkg::DESCRIPTOR_WIDTH;
     localparam int DESCRIPTOR_MEMORY_WIDTH = vit_config_pkg::DESCRIPTOR_MEMORY_WIDTH;
@@ -270,6 +272,29 @@ module matmul_engine #(
                 end
             end
 
+            // write port registers, one set per buffer, right before the block RAM
+            logic [POOL_WRITE_LATENCY-1:0][LANES-1:0]                 write_enable_pipeline;
+            logic [POOL_WRITE_LATENCY-1:0][DEPTH_ADDRESS_WIDTH-1:0]   write_address_pipeline;
+            logic [POOL_WRITE_LATENCY-1:0][LANES-1:0][DATA_WIDTH-1:0] write_data_pipeline;
+
+            always_ff @(posedge CLK) begin
+                if (reset) begin
+                    write_enable_pipeline <= '0;
+                end
+                else begin
+                    write_enable_pipeline[0] <= write_enable;
+                    for (int stage = 1; stage < POOL_WRITE_LATENCY; stage++) begin
+                        write_enable_pipeline[stage] <= write_enable_pipeline[stage-1];
+                    end
+                end
+                write_address_pipeline[0] <= write_address;
+                write_data_pipeline[0]    <= write_data;
+                for (int stage = 1; stage < POOL_WRITE_LATENCY; stage++) begin
+                    write_address_pipeline[stage] <= write_address_pipeline[stage-1];
+                    write_data_pipeline[stage]    <= write_data_pipeline[stage-1];
+                end
+            end
+
             operand_buffer #(
                 .SYS_LANES    (LANES),
                 .BANK_DEPTH   (DEPTH),
@@ -277,9 +302,9 @@ module matmul_engine #(
                 .READ_LATENCY (BUFFER_READ_LATENCY)
             ) buffer_inst (
                 .CLK           (CLK),
-                .write_enable  (write_enable),
-                .write_address ({LANES{write_address}}),
-                .write_data    (write_data),
+                .write_enable  (write_enable_pipeline[POOL_WRITE_LATENCY-1]),
+                .write_address ({LANES{write_address_pipeline[POOL_WRITE_LATENCY-1]}}),
+                .write_data    (write_data_pipeline[POOL_WRITE_LATENCY-1]),
                 .read_address  (read_address),
                 .read_data     (pool_read_data[buffer])
             );
@@ -352,8 +377,9 @@ module matmul_engine #(
         .SYS_ROW    (SYS_ROW),
         .SYS_COL    (SYS_COL),
         .DATA_WIDTH (DATA_WIDTH),
-        .ACC_WIDTH  (ACC_WIDTH),
-        .BANK_DEPTH (BANK_DEPTH_MAX)
+        .ACC_WIDTH     (ACC_WIDTH),
+        .BANK_DEPTH    (BANK_DEPTH_MAX),
+        .WRITE_LATENCY (POOL_WRITE_LATENCY)
     ) drain_inst (
         .CLK            (CLK),
         .reset          (reset),
