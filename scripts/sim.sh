@@ -39,6 +39,8 @@ done
 
 mkdir -p "$root/sim/$snapshot"
 ln -sfn ../golden "$root/sim/golden"
+# ROM images are named relative to rtl/, as synthesis finds them
+ln -sfn ../../rtl/rom "$root/sim/$snapshot/rom"
 cd "$root/sim/$snapshot"
 
 log=../$snapshot.log

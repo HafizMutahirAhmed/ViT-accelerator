@@ -25,6 +25,7 @@ runs=(
     "matmul_stream_controller SYS_ROW=8 SYS_COL=8"
     "requantize"
     "residual_add"
+    "gelu_lut"
     "matmul_engine_nonlinear"
 )
 

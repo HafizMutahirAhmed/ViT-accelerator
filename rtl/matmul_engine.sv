@@ -17,7 +17,7 @@
 // simply by naming its id: nothing is copied. The three ids of an op must
 // differ, because a buffer has one read port and one write port.
 //
-// Row ops (OPCODE_ADD; see vit_config_pkg) work on tensors in row banks, SYS_ROW
+// Row ops (OPCODE_ADD, OPCODE_GELU; see vit_config_pkg) work on tensors in row banks, SYS_ROW
 // rows at a time. row_op_reader issues the read addresses, the op's datapath
 // processes the read data and row_op_writer writes the result. A row op may
 // write to the buffer it reads (in place): a word is written only after it
@@ -93,6 +93,7 @@ module matmul_engine #(
     import vit_config_pkg::descriptor_t;
     import vit_config_pkg::OPCODE_MATMUL;
     import vit_config_pkg::OPCODE_ADD;
+    import vit_config_pkg::OPCODE_GELU;
 
     localparam int BUFFER_COUNT            = vit_config_pkg::BUFFER_COUNT;
     localparam int BANK_DEPTH_MAX          = vit_config_pkg::BANK_DEPTH_MAX;
@@ -174,7 +175,7 @@ module matmul_engine #(
 
     assign busy             = state != STATE_IDLE;
     assign controller_start = state == STATE_LAUNCH && descriptor.opcode == OPCODE_MATMUL;
-    assign is_row_op        = descriptor.opcode == OPCODE_ADD;
+    assign is_row_op        = descriptor.opcode == OPCODE_ADD || descriptor.opcode == OPCODE_GELU;
     assign row_op_start     = state == STATE_LAUNCH && is_row_op;
 
     always_ff @(posedge CLK) begin
@@ -359,7 +360,7 @@ module matmul_engine #(
     ) add_inst (
         .CLK          (CLK),
         .reset        (reset),
-        .valid_in     (row_data_valid),
+        .valid_in     (row_data_valid && descriptor.opcode == OPCODE_ADD),
         .a_in         (row_data_a),
         .b_in         (row_data_b),
         .multiplier_a (descriptor.scale),
@@ -369,15 +370,34 @@ module matmul_engine #(
         .sum_out      (add_sum)
     );
 
+    localparam int GELU_SELECT_WIDTH = (vit_config_pkg::GELU_TABLE_COUNT > 1)
+                                       ? $clog2(vit_config_pkg::GELU_TABLE_COUNT) : 1;
+
+    logic                                      gelu_valid;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] gelu_result;
+
+    gelu_lut #(
+        .LANES      (SYS_ROW),
+        .DATA_WIDTH (DATA_WIDTH)
+    ) gelu_inst (
+        .CLK          (CLK),
+        .reset        (reset),
+        .valid_in     (row_data_valid && descriptor.opcode == OPCODE_GELU),
+        .x_in         (row_data_a),
+        .table_select (descriptor.bias_base[GELU_SELECT_WIDTH-1:0]),
+        .valid_out    (gelu_valid),
+        .y_out        (gelu_result)
+    );
+
     // result register: the datapath of the running row op
     always_ff @(posedge CLK) begin
         if (reset) begin
             row_result_valid <= 1'b0;
         end
         else begin
-            row_result_valid <= add_valid;
+            row_result_valid <= add_valid || gelu_valid;
         end
-        row_result_data <= add_sum;
+        row_result_data <= (descriptor.opcode == OPCODE_GELU) ? gelu_result : add_sum;
     end
 
     row_op_writer #(

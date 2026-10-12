@@ -1,11 +1,13 @@
 """Golden model of the 2-layer DeiT-Tiny forward pass in integer arithmetic.
 
-Usage: .venv/bin/python golden/gen_deit_forward.py [--no-dump]   (needs torch and timm)
+Usage: .venv/bin/python golden/gen_deit_forward.py [--no-dump | --dump-only]   (needs torch and timm)
+       --dump-only writes the vectors without the accuracy report
 Images: golden/images_calibration/ and golden/images_heldout/ come from
 scripts/fetch_images.sh; golden/images/ is in the repo.
 Output, for the test image (the first one of golden/images/):
   golden/vectors/deit/           the 39 matmuls of the pass, for tb_matmul_engine_deit
   golden/vectors/deit_forward/   every stage, the tables and the constants
+  rtl/rom/                       the ROM images of the tables (in the repo)
 
 The pass is the real pretrained model, layers 0 and 1: patch embedding, class
 token and position add, then per layer LayerNorm, Q/K/V, S, softmax, O,
@@ -58,6 +60,7 @@ CALIBRATION_DIR = os.path.join(GOLDEN_DIR, "images_calibration")
 HELDOUT_DIR = os.path.join(GOLDEN_DIR, "images_heldout")
 MATMUL_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit")
 FORWARD_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit_forward")
+ROM_DIR = os.path.join(os.path.dirname(GOLDEN_DIR), "rtl", "rom")   # ROM images, kept in the repo
 
 CALIBRATION_MIN, HELDOUT_MIN = 128, 32
 SYS_ROW = SYS_COL = 8
@@ -560,6 +563,12 @@ def dump(parameters, fp, test_name):
     with open(os.path.join(FORWARD_DIR, "forward_ops.txt"), "w") as manifest:
         manifest.write("\n".join(lines) + "\n")
 
+    # ROM images for the RTL: every table of a kind back to back, in the order of the ops (bias_base)
+    os.makedirs(ROM_DIR, exist_ok=True)
+    write_hex(os.path.join(ROM_DIR, "gelu_rom.hex"),
+              np.concatenate([forward.constants[op["name"]]["table"] for op in forward.row_ops
+                              if op["kind"] == "gelu"]), DATA_WIDTH)
+
     # the non-linear ops as engine ops. nonlinear_ops.txt has one line per op: name, kind, a file, b file or
     # "-", y file, descriptor file, and for layernorm the gain and offset files. Every op is there twice:
     # writing to a third buffer, and in place over operand a.
@@ -621,18 +630,20 @@ def main():
           f"{len(heldout)} held-out images; layernorm {LAYERNORM.name}, softmax {SOFTMAX.name}")
     # pass 2: evaluate on both sets
     evaluations = {}
-    for title, files in (("IN-SAMPLE (the calibration images)", calibration),
-                         ("HELD-OUT (never seen by the calibration)", heldout)):
+    sets = (("IN-SAMPLE (the calibration images)", calibration),
+            ("HELD-OUT (never seen by the calibration)", heldout))
+    for title, files in (() if "--dump-only" in sys.argv else sets):
         evaluation = Evaluation(parameters)
         for file_name in files:
             evaluation.add_image(capture_all(model, load_image(file_name, cfg)), label(file_name))
         evaluation.report(title)
         evaluations[title] = evaluation
 
-    print("\nAll integer: cosine against FP32 at every stage, mean / worst")
-    print(f"  {'stage':12s} {'in-sample':>20s} {'held-out':>20s}")
     tables = [evaluation.stage_table() for evaluation in evaluations.values()]
-    for stage in tables[0]:
+    if tables:
+        print("\nAll integer: cosine against FP32 at every stage, mean / worst")
+        print(f"  {'stage':12s} {'in-sample':>20s} {'held-out':>20s}")
+    for stage in (tables[0] if tables else ()):
         print(f"  {stage:12s} " + "  ".join(f"{np.mean(t[stage]):10.5f} {min(t[stage]):9.5f}" for t in tables))
 
     if "--no-dump" not in sys.argv:

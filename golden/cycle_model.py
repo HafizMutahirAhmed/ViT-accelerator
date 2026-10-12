@@ -24,7 +24,7 @@ is RTL to measure.
                        built; the 5 are the result register, the writer register, the
                        pool write register and two cycles to end the op. Measured in
                        tb_matmul_engine_nonlinear: 4,820 for 197 x 192.
-  gelu        cycles = 4 + tiles * N + tail                    one pass
+  gelu        the same with GELU_LATENCY; measured 19,218 for 197 x 768.
   layernorm   cycles = 4 + tiles * (2 * N + gap) + tail        statistics pass, output pass
   softmax     cycles = 4 + tiles * (3 * N + gap) + tail        max pass, sum pass, output pass
   tiles = ceil(rows / SYS_ROW), N = row length
@@ -52,7 +52,6 @@ def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
 
 # planned pipeline depths of the non-linear units, in cycles
 PLAN = {
-    "gelu_pipeline": 2,         # table read, table output register
     "layernorm_statistics": 7,  # square and accumulate 2, variance 3, reciprocal square root table 2
     "layernorm_pipeline": 7,    # centre 1, times reciprocal 2, shift 1, times gain 2, offset/shift/clip 1
     "softmax_max": 1,           # compare after the last score
@@ -66,11 +65,11 @@ def nonlinear_cycles(kind, rows, length, lanes):
     """Planned cycles of one non-linear op on rows x length, `lanes` rows at a time."""
     tiles = -(-rows // lanes)
     read, write = PARAMS["BUFFER_READ_LATENCY"], PARAMS["POOL_WRITE_LATENCY"]
-    if kind == "add":
-        return (4 + tiles * length + PARAMS["ROW_OP_READ_LATENCY"] + PARAMS["RESIDUAL_ADD_LATENCY"]
-                + 2 + write + 2)
-    if kind == "gelu":
-        per_tile, pipeline = length, PLAN["gelu_pipeline"]
+    if kind in ("add", "gelu"):
+        latency = PARAMS["RESIDUAL_ADD_LATENCY"] if kind == "add" else PARAMS["GELU_LATENCY"]
+        return 4 + tiles * length + PARAMS["ROW_OP_READ_LATENCY"] + latency + 2 + write + 2
+    if False:
+        pass
     elif kind == "layernorm":
         per_tile = 2 * length + read + PLAN["layernorm_statistics"]
         pipeline = PLAN["layernorm_pipeline"]

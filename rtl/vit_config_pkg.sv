@@ -80,7 +80,9 @@ package vit_config_pkg;
     //   OPCODE_ADD  activation and weight name the two operands, both in row
     //               banks; scale = multiplier of the first, bias_base[7:0] =
     //               multiplier of the second, shift = their common shift
+    //   OPCODE_GELU one operand (activation); bias_base = which table
     parameter  OPCODE_ADD    = 4'd1;
+    parameter  OPCODE_GELU   = 4'd2;
 
     // row ops: passes over a row tile are counted in this many bits
     parameter  ROW_OP_PASS_WIDTH = 2;
@@ -92,6 +94,11 @@ package vit_config_pkg;
 
     // cycles through residual_add: operand, product, sum, shifted, output
     parameter  RESIDUAL_ADD_LATENCY = 5;
+
+    // gelu_lut: one table per GELU of the model; cycles through it: address
+    // register, ROM read, output register
+    parameter  GELU_TABLE_COUNT = 2;
+    parameter  GELU_LATENCY     = 3;
 
     // One op of the engine. The first field is the most significant. In the
     // descriptor memory the struct sits in the low DESCRIPTOR_WIDTH bits of a
