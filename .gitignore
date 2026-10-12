@@ -17,6 +17,12 @@ xsim.dir/
 *.wdb
 *.pb
 
+# Golden vectors and images that scripts/gen_vectors.sh regenerates
+golden/vectors/deit/
+golden/vectors/deit_forward/
+golden/images_calibration/
+golden/images_heldout/
+
 # Python
 __pycache__/
 *.pyc

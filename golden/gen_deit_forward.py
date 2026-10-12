@@ -1,32 +1,41 @@
-"""Full 2-layer DeiT-Tiny forward pass in integer arithmetic, with the non-linear ops.
+"""Golden model of the 2-layer DeiT-Tiny forward pass in integer arithmetic.
 
-Usage: .venv/bin/python golden/gen_deit_forward.py [--max] [--no-dump]   (needs torch and timm)
-Output: golden/vectors/deit_forward/*.hex and forward_ops.txt.
+Usage: .venv/bin/python golden/gen_deit_forward.py [--no-dump]   (needs torch and timm)
+Images: golden/images_calibration/ and golden/images_heldout/ come from
+scripts/fetch_images.sh; golden/images/ is in the repo.
+Output, for the test image (the first one of golden/images/):
+  golden/vectors/deit/           the 39 matmuls of the pass, for tb_matmul_engine_deit
+  golden/vectors/deit_forward/   every stage, the tables and the constants
 
-gen_deit_vectors.py tests every matmul on its own captured input. This script
-chains everything: patch embedding, position add, then per layer LayerNorm,
-Q/K/V, S, softmax, O, projection, residual add, LayerNorm, fc1, GELU, fc2,
-residual add, and at the end the final LayerNorm and the classifier. Each
-stage reads the INT8 tensor the stage before it wrote.
+The pass is the real pretrained model, layers 0 and 1: patch embedding, class
+token and position add, then per layer LayerNorm, Q/K/V, S, softmax, O,
+projection, residual add, LayerNorm, fc1, GELU, fc2, residual add, and at the
+end the final LayerNorm on the class row and the classifier. Each stage reads
+the INT8 tensor the stage before it wrote.
 
-Scales. Every tensor has a target scale. Calibration A is the per-tensor
-percentile scale of gen_deit_vectors.py, from the same calibration images, with
-the engine requantizer as it is. Calibration B (--max) takes the largest
-calibration value instead and adds half an output LSB to every matmul bias, so
-the requantizer rounds to nearest; it needs no engine change. The end-to-end
-report covers both; the per-op report and the dump use the selected one. A matmul's
-requantizer multiplier (8-bit scale, 5-bit shift) cannot hit a target ratio
-exactly, so the script carries each tensor's effective scale, the one the
-integers really have, and builds biases, tables and the next multiplier from
-that. The three heads of O share one tensor and keep the target scale.
+Scales. Every tensor has one scale: the largest magnitude seen over the
+calibration images, divided by 127. A matmul's requantizer multiplier (8-bit
+scale, 5-bit shift) cannot hit a wanted ratio exactly, so the pass carries
+each tensor's effective scale, the one the integers really have, and builds
+biases, tables and the next multiplier from that. The three heads of O share
+one tensor and keep the calibrated scale.
+
+Rounding. The engine requantizer floors. Half an output LSB is added to every
+bias word, so the result is rounded to nearest; S and O, which have no bias,
+get a constant one for this.
+
+Class token and position. Row 0 of the patch-embedding input is zero, so row 0
+of its output is the requantized bias. One residual add then adds a constant
+197 x 192 tensor: rows 1..196 hold the position embedding and row 0 holds
+class token + position 0 - that bias row.
 
 The non-linear ops are the integer models in nonlinear_ops.py. Each can also
 run as a "float" reference (the real function on the dequantized INT8 input,
 rounded to INT8), which separates the cost of INT8 tensors from the cost of
-the integer approximation.
+the integer arithmetic.
 
-Reports: per-op error against the FP32 tensor (each op fed its own real
-input), then the end-to-end comparison over all images.
+The report is printed twice: for the calibration images (in-sample) and for
+images the calibration never saw (held-out).
 """
 
 import glob
@@ -37,42 +46,34 @@ import numpy as np
 import timm
 import torch
 
-from gen_deit_vectors import (ACTIVATION_PERCENTILE, IMAGE_DIR, LAYERS, MODEL_NAME, capture, cosine,
-                              load_image, quantize)
-from int8_ops import ACC_MAX, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH, add_bias, read_hex, write_hex
+from gen_deit_vectors import IMAGE_DIR, LAYERS, MODEL_NAME, capture, cosine, load_image, quantize
+from int8_ops import ACC_MAX, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH, add_bias, requantize, write_hex
 from nonlinear_ops import (LayerNormConfig, SoftmaxConfig, add_constants, exp_table, gelu, gelu_real,
-                           gelu_table, layernorm, layernorm_constants, pick_multiplier, reciprocal_table,
-                           residual_add, rsqrt_table, softmax)
+                           gelu_table, layernorm, layernorm_constants, pick_multiplier, residual_add,
+                           rsqrt_table, softmax)
+from pkg_config import PARAMS, pack_descriptor
 
 GOLDEN_DIR = os.path.dirname(os.path.abspath(__file__))
-DEIT_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit")
-VEC_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit_forward")
+CALIBRATION_DIR = os.path.join(GOLDEN_DIR, "images_calibration")
+HELDOUT_DIR = os.path.join(GOLDEN_DIR, "images_heldout")
+MATMUL_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit")
+FORWARD_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit_forward")
 
-LAYERNORM_OPTIONS = [
-    LayerNormConfig("lut64/r8/n6/g8", "lut", index_bits=6, rsqrt_bits=8, norm_frac=6, gain_bits=8),
-    LayerNormConfig("lut256/r12/n8/g8", "lut", index_bits=8, rsqrt_bits=12, norm_frac=8, gain_bits=8),
-    LayerNormConfig("lut256/r12/n8/g16", "lut", index_bits=8, rsqrt_bits=12, norm_frac=8, gain_bits=16),
-    LayerNormConfig("lut1024/r16/n10/g16", "lut", index_bits=10, rsqrt_bits=16, norm_frac=10, gain_bits=16),
-    LayerNormConfig("isqrt/r17/n10/g16", "isqrt", rsqrt_bits=17, norm_frac=10, gain_bits=16),
-]
-SOFTMAX_OPTIONS = [
-    SoftmaxConfig("exp8/divide", exp_bits=8),
-    SoftmaxConfig("exp12/divide", exp_bits=12),
-    SoftmaxConfig("exp16/divide", exp_bits=16),
-    SoftmaxConfig("exp12/lut64", exp_bits=12, reciprocal="lut", index_bits=6),
-    SoftmaxConfig("exp12/lut256", exp_bits=12, reciprocal="lut", index_bits=8),
-    SoftmaxConfig("exp12/divide/x2", exp_bits=12, gain_log2=1),
-    SoftmaxConfig("exp12/divide/cal", exp_bits=12, calibrated=True),
-]
-GELU_WIDTHS = [8, 10, 12]
+CALIBRATION_MIN, HELDOUT_MIN = 128, 32
+SYS_ROW = SYS_COL = 8
+BANK_DEPTH = PARAMS["BANK_DEPTH_MAX"]  # tb_matmul_engine_deit gives every pool buffer this depth
+ROW_SELECT, COLUMN_SELECT = PARAMS["DRAIN_ROW_SELECT"], PARAMS["DRAIN_COLUMN_SELECT"]
 
-# the configuration that is dumped
-RECOMMENDED = dict(layernorm="lut256/r12/n8/g16", softmax="exp12/divide", gelu_width=8,
-                   add_rounding=True, add_multiplier_width=8)
+# precision of the non-linear ops
+LAYERNORM = LayerNormConfig("lut256/r12/n8/g16", "lut", index_bits=8, rsqrt_bits=12, norm_frac=8, gain_bits=16)
+SOFTMAX = SoftmaxConfig("exp12/divide", exp_bits=12)
+ADD_MULTIPLIER_WIDTH = 8
+GAIN_WIDTH, OFFSET_WIDTH = 16, 32   # file widths of the LayerNorm constants
 
-
-def by_name(options, name):
-    return next(option for option in options if option.name == name)
+# descriptor opcodes of the row ops; the package may not define all of them yet
+ROW_OPCODES = {"add": 1, "gelu": 2, "layernorm": 3, "softmax": 4}
+for _kind, _opcode in ROW_OPCODES.items():
+    assert PARAMS.get(f"OPCODE_{_kind.upper()}", _opcode) == _opcode, _kind
 
 
 def capture_all(model, image):
@@ -100,11 +101,15 @@ def capture_all(model, image):
         fp[f"L{layer}_x_out"] = grabbed[f"L{layer}_block_out"]
     weight = model.head.weight.detach().numpy().astype(np.float64).T
     fp["head_out"] = fp["head_in"] @ weight + model.head.bias.detach().numpy().astype(np.float64)
+    # the patch embedding with a zero row 0: its output row 0 is the bias
+    bias = model.patch_embed.proj.bias.detach().numpy().astype(np.float64)
+    fp["embed_in"] = np.vstack([np.zeros((1, fp["embed_in"].shape[1])), fp["embed_in"]])
+    fp["embed_out"] = np.vstack([bias[None, :], fp["embed_out"]])
     return fp
 
 
 class Model:
-    """Quantized weights, FP32 parameters and target scales: everything that does not depend on the image."""
+    """Quantized weights, FP32 parameters and scales: everything that does not depend on the image."""
 
     def __init__(self, model, target):
         self.target = target
@@ -143,10 +148,14 @@ class Model:
         add_linear("head10", head_weight[:, :10], head_bias[:10])
 
         position = numpy(model.pos_embed)[0]
-        self.class_row = numpy(model.cls_token)[0] + position[0:1]
-        self.position_scale = np.abs(position[1:]).max() / DATA_MAX
-        self.position = quantize(position[1:], self.position_scale)
-        self.position_real = position[1:]
+        self.embed_bias = numpy(model.patch_embed.proj.bias)
+        self.class_row = numpy(model.cls_token)[0, 0] + position[0]
+        self.position = position[1:]
+
+    def addend_real(self, bias_row=None):
+        """The constant of the class-and-position add. bias_row: what row 0 of the embedding output holds."""
+        bias_row = self.embed_bias if bias_row is None else bias_row
+        return np.vstack([(self.class_row - bias_row)[None, :], self.position])
 
 
 def layernorm_real(x, gamma, beta, epsilon):
@@ -164,496 +173,470 @@ GELU_REAL = np.vectorize(gelu_real)
 
 
 def matmul(a, b):
-    """matmul_acc, but through float64 for speed. Exact: every sum is far below 2**53."""
+    """int8_ops.matmul_acc, but through float64 for speed. Exact: every sum is far below 2**53."""
     acc = np.rint(a.astype(np.float64) @ b.astype(np.float64)).astype(np.int64)
     assert np.abs(acc).max() <= ACC_MAX
     return acc
 
 
-def numerator_of(scale):
-    """Softmax numerator for a calibrated scale of P: the output is P * numerator."""
-    return max(DATA_MAX, int(round(1.0 / scale)))
-
-
 class Forward:
-    """One image through the integer model. Stages are kept in order in self.stages."""
+    """One image through the integer model.
+
+    options: add, gelu, layernorm, softmax are "int" or "float"; rounding is
+    whether half an LSB goes into the matmul biases.
+    """
 
     def __init__(self, parameters, options):
-        self.m, self.o = parameters, options
-        self.t = dict(parameters.target, **options.get("target", {}))   # target scales, with overrides
+        self.m, self.o, self.t = parameters, options, parameters.target
         self.stages = []      # (name, INT8 tensor, scale, FP32 key or None)
-        self.constants = {}   # name -> dict of integer constants, for the dump
+        self.constants = {}   # non-linear op name -> dict of integer constants
+        self.matmuls = []     # one dict per engine op, in order
+        self.row_ops = []     # one dict per non-linear op, in order
         self.acc_max = 0
-        self.widths = {"layernorm": {}, "softmax": {}}
+        self.gain_error = 0.0
 
     def keep(self, name, tensor, scale, key=None):
         self.stages.append((name, tensor, scale, key))
         return tensor, scale
 
-    def linear(self, name, a, a_scale, target_key, weight_name=None, extra_bits=0):
-        w_q, weight_scale, bias = self.m.linear[weight_name or name]
-        bias_q = np.rint(bias / (a_scale * weight_scale)).astype(np.int64)
-        acc = add_bias(matmul(a, w_q), bias_q)
-        return self.requantize(name, acc, a_scale * weight_scale, target_key, bias_q, extra_bits)
-
-    def requantize(self, name, acc, acc_scale, target_key, bias_q=None, extra_bits=0, fixed_scale=False):
-        """The engine requantizer. extra_bits > 0 keeps a wider result (GELU study only)."""
-        self.acc_max = max(self.acc_max, int(np.abs(acc).max()))
-        assert np.abs(acc).max() < ACC_MAX
+    def engine_op(self, name, group, a_name, a, b, acc_scale, target_key, bias_real=None,
+                  drain_mode=COLUMN_SELECT, output_base=0, output_stride=None, fixed_scale=False):
+        """One matmul_engine op: acc = a @ b + bias, out = clip((acc * scale) >>> shift)."""
         scale, shift = pick_multiplier(acc_scale / self.t[target_key])
-        assert shift >= extra_bits, name
-        if self.o["matmul_rounding"] and shift > 0:
-            # half an output LSB, as an addition to every bias word
-            rounding = int(round((1 << (shift - 1)) / scale))
-            acc = acc + rounding
-            bias_q = rounding if bias_q is None else bias_q + rounding
-        low, high = DATA_MIN << extra_bits, ((DATA_MAX + 1) << extra_bits) - 1
-        y = np.clip((acc * scale) >> (shift - extra_bits), low, high)
+        bias = np.zeros(b.shape[1], dtype=np.int64)
+        if bias_real is not None:
+            bias = np.rint(bias_real / acc_scale).astype(np.int64)
+        if self.o["rounding"] and shift > 0:
+            bias = bias + int(round((1 << (shift - 1)) / scale))   # half an output LSB
+        has_bias = bias_real is not None or self.o["rounding"]
+        acc = matmul(a, b)
+        if has_bias:
+            acc = add_bias(acc, bias)
+        self.acc_max = max(self.acc_max, int(np.abs(acc).max()))
+        y = requantize(acc, scale, shift)
         effective = acc_scale * (1 << shift) / scale
-        self.constants[name] = dict(scale=scale, shift=shift, bias=bias_q,
-                                    gain_error=effective / self.t[target_key] - 1.0)
-        out_scale = self.t[target_key] if fixed_scale else effective
-        return y, out_scale / (1 << extra_bits)
+        self.gain_error = max(self.gain_error, abs(effective / self.t[target_key] - 1.0))
+        natural = b.shape[1] if drain_mode == COLUMN_SELECT else a.shape[0]
+        self.matmuls.append(dict(name=name, group=group, a_name=a_name, a=a, b=b, bias=bias if has_bias else None,
+                                 y=y, scale=scale, shift=shift, drain_mode=drain_mode, output_base=output_base,
+                                 output_stride=natural if output_stride is None else output_stride))
+        return y, (self.t[target_key] if fixed_scale else effective)
+
+    def linear(self, name, group, a_name, a, a_scale, target_key, **layout):
+        w_q, weight_scale, bias = self.m.linear[name]
+        return self.engine_op(name, group, a_name, a, w_q, a_scale * weight_scale, target_key, bias, **layout)
 
     def add(self, name, a, a_scale, b, b_scale, target_key):
         if self.o["add"] == "float":
             scale = self.t[target_key]
             return quantize(a * a_scale + b * b_scale, scale), scale
-        limit = (1 << (self.o["add_multiplier_width"] - 1)) - 1
-        mult_a, mult_b, shift, effective, gain_error = add_constants(a_scale, b_scale, self.t[target_key],
-                                                                     limit)
-        self.constants[name] = dict(mult_a=mult_a, mult_b=mult_b, shift=shift, gain_error=gain_error)
-        y = residual_add(a, b, mult_a, mult_b, shift, self.o["add_rounding"], self.o["add_multiplier_width"])
+        limit = (1 << (ADD_MULTIPLIER_WIDTH - 1)) - 1
+        mult_a, mult_b, shift, effective, gain_error = add_constants(a_scale, b_scale, self.t[target_key], limit)
+        self.constants[name] = dict(mult_a=mult_a, mult_b=mult_b, shift=shift)
+        self.gain_error = max(self.gain_error, abs(gain_error))
+        y = residual_add(a, b, mult_a, mult_b, shift, True, ADD_MULTIPLIER_WIDTH)
+        self.row_ops.append(dict(name=name, kind="add", a=a, b=b, y=y, scale=mult_a, bias_base=mult_b & 0xFF,
+                                 shift=shift))
         return y, effective
 
     def layernorm(self, name, x, x_scale, target_key):
         gamma, beta, epsilon = self.m.norm[name]
         scale = self.t[target_key]
-        config = self.o["layernorm"]
-        if config == "float":
+        if self.o["layernorm"] == "float":
             return quantize(layernorm_real(x * x_scale, gamma, beta, epsilon), scale), scale
-        gain, offset, out_shift, epsilon_int = layernorm_constants(gamma, beta, x_scale, scale, epsilon, config)
-        table = rsqrt_table(config) if config.rsqrt == "lut" else None
+        gain, offset, out_shift, epsilon_int = layernorm_constants(gamma, beta, x_scale, scale, epsilon, LAYERNORM)
         self.constants[name] = dict(gain=gain, offset=offset, out_shift=out_shift, epsilon_int=epsilon_int)
-        y = layernorm(x, gain, offset, out_shift, epsilon_int, config, table, self.widths["layernorm"])
+        y = layernorm(x, gain, offset, out_shift, epsilon_int, LAYERNORM, rsqrt_table(LAYERNORM))
+        # bias_base: where this LayerNorm's gain and offset start in the constants memory
+        self.row_ops.append(dict(name=name, kind="layernorm", a=x, y=y, shift=out_shift, inner_dim=epsilon_int,
+                                 bias_base=sum(op["kind"] == "layernorm" for op in self.row_ops) * x.shape[1],
+                                 files=(f"{name}_gain.hex", f"{name}_offset.hex")))
         return y, scale
 
     def softmax(self, name, scores, score_scale):
-        config = self.o["softmax"]
-        if config == "float":
+        if self.o["softmax"] == "float":
             return quantize(softmax_real(scores * score_scale) * DATA_MAX, 1.0).clip(0), 1.0 / DATA_MAX
-        table = exp_table(score_scale, config)
-        recip = reciprocal_table(config) if config.reciprocal == "lut" else None
+        table = exp_table(score_scale, SOFTMAX)
         self.constants[name] = dict(exp_table=table)
-        numerator = numerator_of(self.t[name]) if config.calibrated else DATA_MAX << config.gain_log2
-        self.constants[name]["numerator"] = numerator
-        y = softmax(scores, table, config, recip, self.widths["softmax"], numerator)
-        return y, 1.0 / numerator
+        y = softmax(scores, table, SOFTMAX)
+        # bias_base: which exp table, one per head and layer
+        self.row_ops.append(dict(name=name, kind="softmax", a=scores, y=y,
+                                 bias_base=sum(op["kind"] == "softmax" for op in self.row_ops)))
+        return y, 1.0 / DATA_MAX
 
     def gelu(self, name, x, x_scale, target_key):
         scale = self.t[target_key]
         if self.o["gelu"] == "float":
             return quantize(GELU_REAL(x * x_scale), scale), scale
-        table = gelu_table(x_scale, scale, self.o["gelu_width"])
+        table = gelu_table(x_scale, scale)
         self.constants[name] = dict(table=table)
-        return gelu(x, table), scale
+        y = gelu(x, table)
+        # bias_base: which table, one per layer
+        self.row_ops.append(dict(name=name, kind="gelu", a=x, y=y,
+                                 bias_base=sum(op["kind"] == "gelu" for op in self.row_ops)))
+        return y, scale
 
     def run(self, fp):
         m, keep = self.m, self.keep
-        embed_in = quantize(fp["embed_in"], self.t["embed_in"])
-        keep("embed_in", embed_in, self.t["embed_in"])
-        patches, patch_scale = keep("embed_out", *self.linear("embed", embed_in, self.t["embed_in"], "embed_out"),
-                                    "embed_out")
-        keep("position", m.position, m.position_scale)
-        body, x_scale = self.add("position_add", patches, patch_scale, m.position, m.position_scale, "L0_x_in")
-        # the class row is a constant: class token + position 0, written by the host
-        x = np.vstack([quantize(m.class_row, x_scale), body])
-        keep("L0_x_in", x, x_scale, "L0_x_in")
+        embed_in, embed_in_scale = keep("embed_in", quantize(fp["embed_in"], self.t["embed_in"]), self.t["embed_in"])
+        patches, patch_scale = keep("embed_out", *self.linear("embed", "embed", "embed_in", embed_in, embed_in_scale,
+                                                              "embed_out"), "embed_out")
+        # row 0 of patches is the requantized bias; the addend's row 0 makes it class token + position 0
+        addend_real = m.addend_real(patches[0] * patch_scale)
+        addend_scale = np.abs(addend_real).max() / DATA_MAX
+        addend, _ = keep("addend", quantize(addend_real, addend_scale), addend_scale)
+        x, x_scale = keep("L0_x_in", *self.add("position_add", patches, patch_scale, addend, addend_scale, "L0_x_in"),
+                          "L0_x_in")
 
         for layer in range(LAYERS):
             p = f"L{layer}"
             n1, n1_scale = keep(f"{p}_ln1", *self.layernorm(f"{p}_ln1", x, x_scale, f"{p}_qkv_in"), f"{p}_qkv_in")
-            attention = np.zeros((x.shape[0], m.embed), dtype=np.int64)
+            heads = []
             for head in range(m.heads):
                 h = f"{p}_h{head}"
-                q, q_scale = keep(f"{h}_q", *self.linear(f"{h}_q", n1, n1_scale, f"{h}_q"), f"{h}_q")
-                k, k_scale = keep(f"{h}_k", *self.linear(f"{h}_k", n1, n1_scale, f"{h}_k"), f"{h}_k")
-                v, v_scale = keep(f"{h}_v", *self.linear(f"{h}_v", n1, n1_scale, f"{h}_v"), f"{h}_v")
+                q = keep(f"{h}_q", *self.linear(f"{h}_q", p, f"{p}_ln1", n1, n1_scale, f"{h}_q"), f"{h}_q")
+                k = keep(f"{h}_k", *self.linear(f"{h}_k", p, f"{p}_ln1", n1, n1_scale, f"{h}_k"), f"{h}_k")
+                v = keep(f"{h}_v", *self.linear(f"{h}_v", p, f"{p}_ln1", n1, n1_scale, f"{h}_v",
+                                                drain_mode=ROW_SELECT), f"{h}_v")
+                heads.append((h, q, k, v))
+            probabilities = []
+            for h, (q, q_scale), (k, k_scale), _v in heads:
                 # S = Q @ K^T; the 1/sqrt(head_dim) is part of the requantizer multiplier
-                s, s_scale = keep(f"{h}_s", *self.requantize(f"{h}_s", matmul(q, k.T),
-                                                             q_scale * k_scale * m.attention_scale, f"{h}_s"),
-                                  f"{h}_s")
-                prob, prob_scale = keep(f"{h}_p", *self.softmax(f"{h}_p", s, s_scale), f"{h}_p")
-                o, _ = self.requantize(f"{h}_o", matmul(prob, v), prob_scale * v_scale, f"{p}_proj_in",
-                                       fixed_scale=True)
+                s, s_scale = keep(f"{h}_s", *self.engine_op(f"{h}_s", p, f"{h}_q", q, k.T.copy(),
+                                                            q_scale * k_scale * m.attention_scale, f"{h}_s"), f"{h}_s")
+                probabilities.append(keep(f"{h}_p", *self.softmax(f"{h}_p", s, s_scale), f"{h}_p"))
+            attention = np.zeros((x.shape[0], m.embed), dtype=np.int64)
+            for head, ((h, _q, _k, (v, v_scale)), (prob, prob_scale)) in enumerate(zip(heads, probabilities)):
+                # O = P @ V lands in its slot of the 197 x 192 tensor
+                o, _ = self.engine_op(f"{h}_o", p, f"{h}_p", prob, v, prob_scale * v_scale, f"{p}_proj_in",
+                                      output_base=head * m.head_dim, output_stride=m.embed, fixed_scale=True)
                 attention[:, head * m.head_dim:(head + 1) * m.head_dim] = o
             attention, attention_scale = keep(f"{p}_o", attention, self.t[f"{p}_proj_in"], f"{p}_proj_in")
-            proj, proj_scale = keep(f"{p}_proj", *self.linear(f"{p}_proj", attention, attention_scale,
+            proj, proj_scale = keep(f"{p}_proj", *self.linear(f"{p}_proj", p, f"{p}_o", attention, attention_scale,
                                                               f"{p}_proj_out"), f"{p}_proj_out")
             x, x_scale = keep(f"{p}_x_mid", *self.add(f"{p}_add1", x, x_scale, proj, proj_scale, f"{p}_x_mid"),
                               f"{p}_x_mid")
             n2, n2_scale = keep(f"{p}_ln2", *self.layernorm(f"{p}_ln2", x, x_scale, f"{p}_fc1_in"), f"{p}_fc1_in")
-            extra = self.o["gelu_width"] - DATA_WIDTH if self.o["gelu"] != "float" else 0
-            fc1, fc1_scale = self.linear(f"{p}_fc1", n2, n2_scale, f"{p}_fc1_out", extra_bits=extra)
-            keep(f"{p}_fc1", fc1, fc1_scale, f"{p}_fc1_out")
-            act, act_scale = keep(f"{p}_gelu", *self.gelu(f"{p}_gelu", fc1, fc1_scale, f"{p}_fc2_in"),
-                                  f"{p}_fc2_in")
-            fc2, fc2_scale = keep(f"{p}_fc2", *self.linear(f"{p}_fc2", act, act_scale, f"{p}_fc2_out"),
+            fc1, fc1_scale = keep(f"{p}_fc1", *self.linear(f"{p}_fc1", p, f"{p}_ln2", n2, n2_scale, f"{p}_fc1_out"),
+                                  f"{p}_fc1_out")
+            act, act_scale = keep(f"{p}_gelu", *self.gelu(f"{p}_gelu", fc1, fc1_scale, f"{p}_fc2_in"), f"{p}_fc2_in")
+            fc2, fc2_scale = keep(f"{p}_fc2", *self.linear(f"{p}_fc2", p, f"{p}_gelu", act, act_scale, f"{p}_fc2_out"),
                                   f"{p}_fc2_out")
             x, x_scale = keep(f"{p}_x_out", *self.add(f"{p}_add2", x, x_scale, fc2, fc2_scale, f"{p}_x_out"),
                               f"{p}_x_out")
 
         # the 2-layer truncated model: final LayerNorm on the class row, then the classifier
         final, final_scale = keep("final_ln", *self.layernorm("final_ln", x[0:1], x_scale, "head_in"), "head_in")
-        logits, _ = keep("head1000", *self.linear("head1000", final, final_scale, "head_out"), "head_out")
-        keep("head10", *self.linear("head10", final, final_scale, "head_out"))
-        return x, x_scale, logits
-
-
-def error_stats(result, scale, real):
-    """(max |error|, mean |error|) in output LSBs, and the cosine, against a real tensor."""
-    error = np.abs(result - real / scale)
-    return error.max(), error.mean(), cosine(result, real)
+        keep("head10", *self.linear("head10", "head", "final_ln", final, final_scale, "head_out"))
+        keep("head1000", *self.linear("head1000", "head", "final_ln", final, final_scale, "head_out"), "head_out")
+        return self
 
 
 class Tally:
-    """Collects per-instance error statistics of one op variant."""
+    """Error statistics of one op variant over many instances."""
 
     def __init__(self):
         self.max_error, self.mean_error, self.cosines = 0.0, [], []
         self.exact, self.count, self.max_step = 0, 0, 0
 
     def add(self, result, scale, real, ideal):
-        """ideal: the float op on the same INT8 input, rounded to INT8."""
-        max_error, mean_error, cos = error_stats(result, scale, real)
-        self.max_error = max(self.max_error, max_error)
-        self.mean_error.append(mean_error)
-        self.cosines.append(cos)
+        """real: the FP32 tensor. ideal: the float op on the same INT8 input, rounded to INT8."""
+        error = np.abs(result - real / scale)
+        self.max_error = max(self.max_error, float(error.max()))
+        self.mean_error.append(float(error.mean()))
+        self.cosines.append(cosine(result, real))
         self.exact += int((result == ideal).sum())
         self.count += result.size
         self.max_step = max(self.max_step, int(np.abs(result - ideal).max()))
 
     def row(self, name):
-        return (f"  {name:22s} {self.max_error:8.2f} {np.mean(self.mean_error):8.3f} {np.mean(self.cosines):9.5f} "
-                f"{min(self.cosines):9.5f} {100.0 * self.exact / self.count:8.2f}% {self.max_step:5d}")
+        return (f"  {name:34s} {self.max_error:8.2f} {np.mean(self.mean_error):8.3f} {np.mean(self.cosines):9.5f} "
+                f"{min(self.cosines):9.5f} {100.0 * self.exact / self.count:8.2f}% {self.max_step:4d}")
 
 
-TALLY_HEADER = (f"  {'variant':22s} {'max err':>8s} {'mean err':>8s} {'cos mean':>9s} {'cos min':>9s} "
-                f"{'= float':>9s} {'max':>5s}")
+FLOAT_OPS = dict(add="float", gelu="float", layernorm="float", softmax="float", rounding=True)
+INTEGER_OPS = dict(add="int", gelu="int", layernorm="int", softmax="int", rounding=True)
+VARIANTS = [("INT8 tensors, float non-linear ops", FLOAT_OPS),
+            ("all integer", INTEGER_OPS),
+            ("all integer, requantizer floors", dict(INTEGER_OPS, rounding=False))]
+PER_OP = ["residual add", "GELU", "LayerNorm, 197 rows", "LayerNorm, class row", "softmax"]
 
 
-def per_op_report(parameters, captures):
-    """Each op on its own real input, quantized with the target scale, over every image."""
-    m, target = parameters, parameters.target
-    print("\nPer-op error, each op fed its own real input (all images, all instances).")
-    print("Errors are in output LSBs against the FP32 tensor. '= float' is the share of outputs equal to")
-    print("the real function applied to the same INT8 input and rounded; 'max' is the largest difference from it.")
+class Evaluation:
+    """Per-op and end-to-end statistics over one set of images."""
 
-    def section(title):
-        print(f"\n{title}\n{TALLY_HEADER}")
+    def __init__(self, parameters):
+        self.m = parameters
+        self.tallies = {(op, kind): Tally() for op in PER_OP for kind in ("float", "integer")}
+        self.stage_cosines = {name: {} for name, _ in VARIANTS}
+        self.final_error = {name: [] for name, _ in VARIANTS}
+        self.agree = {name: [0, 0] for name, _ in VARIANTS}
+        self.full_correct = self.truncated_correct = self.count = 0
+        self.truncated_classes = set()
+        self.acc_max, self.gain_error = 0, 0.0
 
-    section("Residual add (position, attention, MLP: 5 per image)")
-    variants = [("float", None, None), ("8-bit mult, floor", 8, False), ("8-bit mult, round", 8, True),
-                ("16-bit mult, round", 16, True)]
-    tallies = {name: Tally() for name, _, _ in variants}
-    gain_errors = []
-    for fp in captures:
-        cases = [(fp["embed_out"], target["embed_out"], m.position_real, m.position_scale, "L0_x_in", slice(1, None))]
+    def per_op(self, fp):
+        """Each op on its own real input, quantized with the calibrated scale."""
+        m, target, tallies = self.m, self.m.target, self.tallies
+        limit = (1 << (ADD_MULTIPLIER_WIDTH - 1)) - 1
+
+        addend_real = m.addend_real()
+        cases = [(fp["embed_out"], target["embed_out"], addend_real, np.abs(addend_real).max() / DATA_MAX, "L0_x_in")]
         for layer in range(LAYERS):
             p = f"L{layer}"
             cases += [(fp[f"{p}_x_in"], target[f"{p}_x_in"], fp[f"{p}_proj_out"], target[f"{p}_proj_out"],
-                       f"{p}_x_mid", slice(None)),
+                       f"{p}_x_mid"),
                       (fp[f"{p}_x_mid"], target[f"{p}_x_mid"], fp[f"{p}_fc2_out"], target[f"{p}_fc2_out"],
-                       f"{p}_x_out", slice(None))]
-        for a_real, a_scale, b_real, b_scale, out_key, rows in cases:
-            a, b, real = quantize(a_real, a_scale), quantize(b_real, b_scale), fp[out_key][rows]
+                       f"{p}_x_out")]
+        for a_real, a_scale, b_real, b_scale, out_key in cases:
+            a, b, real = quantize(a_real, a_scale), quantize(b_real, b_scale), fp[out_key]
             ideal = quantize(a * a_scale + b * b_scale, target[out_key])
-            for name, width, rounding in variants:
-                if width is None:
-                    tallies[name].add(ideal, target[out_key], real, ideal)
-                    continue
-                mult_a, mult_b, shift, effective, gain_error = add_constants(
-                    a_scale, b_scale, target[out_key], (1 << (width - 1)) - 1)
-                if width == 8:
-                    gain_errors.append(abs(gain_error))
-                result = residual_add(a, b, mult_a, mult_b, shift, rounding, width)
-                # compare at the scale the integers really have
-                tallies[name].add(result, effective, real, quantize(a * a_scale + b * b_scale, effective))
-    for name, _, _ in variants:
-        print(tallies[name].row(name))
-    print(f"  8-bit multipliers: largest gain error of the less exact input {100 * max(gain_errors):.2f}%")
+            tallies["residual add", "float"].add(ideal, target[out_key], real, ideal)
+            mult_a, mult_b, shift, effective, _ = add_constants(a_scale, b_scale, target[out_key], limit)
+            result = residual_add(a, b, mult_a, mult_b, shift, True, ADD_MULTIPLIER_WIDTH)
+            # compare at the scale the integers really have
+            tallies["residual add", "integer"].add(result, effective, real,
+                                                   quantize(a * a_scale + b * b_scale, effective))
 
-    section("GELU (2 per image)")
-    tallies = {"float": Tally()}
-    tallies.update({f"{width}-bit in, {1 << width} entries": Tally() for width in GELU_WIDTHS})
-    for fp in captures:
         for layer in range(LAYERS):
             p = f"L{layer}"
-            real, out_scale = fp[f"{p}_fc2_in"], target[f"{p}_fc2_in"]
-            for width in GELU_WIDTHS:
-                in_scale = target[f"{p}_fc1_out"] / (1 << (width - DATA_WIDTH))
-                limit = 1 << (width - 1)
-                x = np.clip(np.rint(fp[f"{p}_fc1_out"] / in_scale), -limit, limit - 1).astype(np.int64)
-                ideal = quantize(GELU_REAL(x * in_scale), out_scale)
-                if width == DATA_WIDTH:
-                    tallies["float"].add(ideal, out_scale, real, ideal)
-                tallies[f"{width}-bit in, {1 << width} entries"].add(
-                    gelu(x, gelu_table(in_scale, out_scale, width)), out_scale, real, ideal)
-    for name, tally in tallies.items():
-        print(tally.row(name))
+            in_scale, out_scale, real = target[f"{p}_fc1_out"], target[f"{p}_fc2_in"], fp[f"{p}_fc2_in"]
+            x = quantize(fp[f"{p}_fc1_out"], in_scale)
+            ideal = quantize(GELU_REAL(x * in_scale), out_scale)
+            tallies["GELU", "float"].add(ideal, out_scale, real, ideal)
+            tallies["GELU", "integer"].add(gelu(x, gelu_table(in_scale, out_scale)), out_scale, real, ideal)
 
-    widths = {config.name: {} for config in LAYERNORM_OPTIONS}
-    for title, final_only in (("LayerNorm on 197 rows (ln1 and ln2 of each layer: 4 per image)", False),
-                              ("LayerNorm on the class row (the final one: 1 per image)", True)):
-        section(title)
-        tallies = {"float": Tally()}
-        tallies.update({config.name: Tally() for config in LAYERNORM_OPTIONS})
-        for fp in captures:
-            cases = [("final_ln", fp[f"L{LAYERS - 1}_x_out"][0:1], f"L{LAYERS - 1}_x_out", "head_in")]
-            if not final_only:
-                cases = []
-                for layer in range(LAYERS):
-                    p = f"L{layer}"
-                    cases += [(f"{p}_ln1", fp[f"{p}_x_in"], f"{p}_x_in", f"{p}_qkv_in"),
-                              (f"{p}_ln2", fp[f"{p}_x_mid"], f"{p}_x_mid", f"{p}_fc1_in")]
-            for name, x_real, in_key, out_key in cases:
-                gamma, beta, epsilon = m.norm[name]
-                x, real = quantize(x_real, target[in_key]), fp[out_key]
-                ideal = quantize(layernorm_real(x * target[in_key], gamma, beta, epsilon), target[out_key])
-                tallies["float"].add(ideal, target[out_key], real, ideal)
-                for config in LAYERNORM_OPTIONS:
-                    gain, offset, out_shift, epsilon_int = layernorm_constants(gamma, beta, target[in_key],
-                                                                              target[out_key], epsilon, config)
-                    table = rsqrt_table(config) if config.rsqrt == "lut" else None
-                    result = layernorm(x, gain, offset, out_shift, epsilon_int, config, table, widths[config.name])
-                    tallies[config.name].add(result, target[out_key], real, ideal)
-        for name, tally in tallies.items():
-            print(tally.row(name))
-    print("  largest magnitudes seen, in bits (sign bit not counted):")
-    for config in LAYERNORM_OPTIONS:
-        seen = "  ".join(f"{key} {int(value).bit_length()}" for key, value in sorted(widths[config.name].items()))
-        print(f"    {config.name:22s} {seen}   table {config.table_bits()} bits")
+        cases = [("LayerNorm, class row", "final_ln", fp[f"L{LAYERS - 1}_x_out"][0:1], f"L{LAYERS - 1}_x_out",
+                  "head_in")]
+        for layer in range(LAYERS):
+            p = f"L{layer}"
+            cases += [("LayerNorm, 197 rows", f"{p}_ln1", fp[f"{p}_x_in"], f"{p}_x_in", f"{p}_qkv_in"),
+                      ("LayerNorm, 197 rows", f"{p}_ln2", fp[f"{p}_x_mid"], f"{p}_x_mid", f"{p}_fc1_in")]
+        table = rsqrt_table(LAYERNORM)
+        for op, name, x_real, in_key, out_key in cases:
+            gamma, beta, epsilon = m.norm[name]
+            x, real = quantize(x_real, target[in_key]), fp[out_key]
+            ideal = quantize(layernorm_real(x * target[in_key], gamma, beta, epsilon), target[out_key])
+            tallies[op, "float"].add(ideal, target[out_key], real, ideal)
+            gain, offset, out_shift, epsilon_int = layernorm_constants(gamma, beta, target[in_key], target[out_key],
+                                                                      epsilon, LAYERNORM)
+            tallies[op, "integer"].add(layernorm(x, gain, offset, out_shift, epsilon_int, LAYERNORM, table),
+                                       target[out_key], real, ideal)
 
-    section("Softmax (3 heads per layer, 197 rows of 197)")
-    tallies = {"float": Tally()}
-    tallies.update({config.name: Tally() for config in SOFTMAX_OPTIONS})
-    widths = {config.name: {} for config in SOFTMAX_OPTIONS}
-    for fp in captures:
         for layer in range(LAYERS):
             for head in range(m.heads):
                 h = f"L{layer}_h{head}"
                 s, real = quantize(fp[f"{h}_s"], target[f"{h}_s"]), fp[f"{h}_p"]
-                probability = softmax_real(s * target[f"{h}_s"])
-                ideal = np.clip(np.rint(probability * DATA_MAX), 0, DATA_MAX).astype(np.int64)
-                tallies["float"].add(ideal, 1.0 / DATA_MAX, real, ideal)
-                for config in SOFTMAX_OPTIONS:
-                    recip = reciprocal_table(config) if config.reciprocal == "lut" else None
-                    gain = numerator_of(target[f"{h}_p"]) if config.calibrated else DATA_MAX << config.gain_log2
-                    result = softmax(s, exp_table(target[f"{h}_s"], config), config, recip, widths[config.name],
-                                     gain)
-                    ideal_gain = np.clip(np.rint(probability * gain), 0, DATA_MAX).astype(np.int64)
-                    tallies[config.name].add(result, 1.0 / gain, real, ideal_gain)
-    for name, tally in tallies.items():
-        print(tally.row(name))
-    print("  largest magnitudes seen, in bits:")
-    for config in SOFTMAX_OPTIONS:
-        seen = "  ".join(f"{key} {int(value).bit_length()}" for key, value in sorted(widths[config.name].items()))
-        print(f"    {config.name:22s} {seen}   tables {config.table_bits()} bits")
+                ideal = np.clip(np.rint(softmax_real(s * target[f"{h}_s"]) * DATA_MAX), 0, DATA_MAX).astype(np.int64)
+                tallies["softmax", "float"].add(ideal, 1.0 / DATA_MAX, real, ideal)
+                tallies["softmax", "integer"].add(softmax(s, exp_table(target[f"{h}_s"], SOFTMAX), SOFTMAX),
+                                                  1.0 / DATA_MAX, real, ideal)
+
+    def add_image(self, fp, label):
+        self.count += 1
+        self.per_op(fp)
+        reference = int(np.argmax(fp["head_out"]))
+        reference10 = int(np.argmax(fp["head_out"][0, :10]))
+        self.full_correct += int(np.argmax(fp["logits_full"])) == label
+        self.truncated_correct += reference == label
+        self.truncated_classes.add(reference)
+        final = f"L{LAYERS - 1}_x_out"
+        for name, options in VARIANTS:
+            forward = Forward(self.m, options).run(fp)
+            for stage, tensor, scale, key in forward.stages:
+                if key is not None:
+                    self.stage_cosines[name].setdefault(stage, []).append(cosine(tensor, fp[key]))
+                if stage == final:
+                    self.final_error[name].append(float(np.abs(tensor - fp[key] / scale).mean()))
+                if stage == "head1000":
+                    self.agree[name][0] += int(np.argmax(tensor)) == reference
+                if stage == "head10":
+                    self.agree[name][1] += int(np.argmax(tensor)) == reference10
+            if options is INTEGER_OPS:
+                self.acc_max = max(self.acc_max, forward.acc_max)
+                self.gain_error = max(self.gain_error, forward.gain_error)
+
+    def report(self, title):
+        count, final = self.count, f"L{LAYERS - 1}_x_out"
+        print(f"\n=== {title}: {count} images ===")
+        print("Per-op error, each op fed its own real input. Errors are in output LSBs against the FP32 tensor.")
+        print("'= float' is the share of outputs equal to the real function on the same INT8 input, rounded;")
+        print("'max' is the largest difference from it.")
+        print(f"  {'op':34s} {'max err':>8s} {'mean err':>8s} {'cos mean':>9s} {'cos min':>9s} {'= float':>9s} "
+              f"{'max':>4s}")
+        for op in PER_OP:
+            print(self.tallies[op, "float"].row(f"{op}, float reference"))
+            print(self.tallies[op, "integer"].row(f"{op}, integer"))
+        print(f"End to end. 'cos' and 'err' are the layer {LAYERS} output (197x192) against FP32, 'final LN' and "
+              f"'logits' the class row")
+        print("after the final LayerNorm and the 1000 logits. Top-1 is agreement with the FP32 2-layer model.")
+        print(f"  {'variant':36s} {'cos mean':>9s} {'cos min':>9s} {'err LSB':>8s} {'final LN':>9s} {'logits':>8s} "
+              f"{'top-1 /1000':>12s} {'top-1 /10':>11s}")
+        for name, _ in VARIANTS:
+            cosines = self.stage_cosines[name]
+            print(f"  {name:36s} {np.mean(cosines[final]):9.5f} {min(cosines[final]):9.5f} "
+                  f"{np.mean(self.final_error[name]):8.3f} {np.mean(cosines['final_ln']):9.4f} "
+                  f"{np.mean(cosines['head1000']):8.4f} {self.agree[name][0]:5d} of {count:3d} "
+                  f"{self.agree[name][1]:4d} of {count:3d}")
+        print(f"FP32 context: full 12-layer model top-1 correct {self.full_correct} of {count}; 2-layer truncated "
+              f"model {self.truncated_correct} of {count}, predicting {len(self.truncated_classes)} distinct "
+              f"class(es)")
+        print(f"largest |accumulator| {self.acc_max} ({100.0 * self.acc_max / 2 ** 31:.4f}% of 2^31); multipliers "
+              f"at most {100 * self.gain_error:.2f}% from the wanted ratio")
+
+    def stage_table(self):
+        return self.stage_cosines["all integer"]
 
 
-def end_to_end(parameters, captures, options):
-    """Runs every image. Returns per-stage cosines, 1000-class and 10-class predictions and the last run."""
-    stage_cosines, predictions, predictions10 = {}, [], []
-    forward = None
-    for fp in captures:
-        forward = Forward(parameters, options)
-        forward.run(fp)
-        for name, tensor, _scale, key in forward.stages:
-            if key is not None:
-                stage_cosines.setdefault(name, []).append(cosine(tensor, fp[key]))
-            if name == "head1000":
-                predictions.append(int(np.argmax(tensor)))
-            if name == "head10":
-                predictions10.append(int(np.argmax(tensor)))
-    return stage_cosines, predictions, predictions10, forward
+def dump(parameters, fp, test_name):
+    """The test image: the engine ops for tb_matmul_engine_deit and every stage of the pass."""
+    forward = Forward(parameters, INTEGER_OPS).run(fp)
 
+    def fresh(directory):
+        os.makedirs(directory, exist_ok=True)
+        for stale in glob.glob(os.path.join(directory, "*")):
+            os.remove(stale)
 
-def options_for(**changes):
-    """All non-linear ops as float references, except the ones named."""
-    options = dict(add="float", gelu="float", layernorm="float", softmax="float",
-                   gelu_width=8, add_rounding=True, add_multiplier_width=8, matmul_rounding=False)
-    options.update(changes)
-    return options
+    # golden/vectors/deit: one line per op in deit_ops.txt, name, group, A file, B file, bias file, Y file,
+    # descriptor file. A, B, Y are INT8 row-major, bias is INT32 per column.
+    fresh(MATMUL_DIR)
+    written = set()
+    with open(os.path.join(MATMUL_DIR, "deit_ops.txt"), "w") as manifest:
+        for op in forward.matmuls:
+            name, (rows, inner), cols = op["name"], op["a"].shape, op["b"].shape[1]
+            row_tiles, col_tiles = -(-rows // SYS_ROW), -(-cols // SYS_COL)
+            bank_rows = row_tiles if op["drain_mode"] == COLUMN_SELECT else col_tiles
+            assert row_tiles * inner <= BANK_DEPTH and col_tiles * inner <= BANK_DEPTH, name
+            assert op["output_base"] + bank_rows * op["output_stride"] <= BANK_DEPTH, name
+            assert col_tiles <= PARAMS["BIAS_DEPTH"], name
+            descriptor = pack_descriptor(
+                opcode=PARAMS["OPCODE_MATMUL"], rows_total=rows, inner_dim=inner, cols_total=cols,
+                row_tiles=row_tiles, col_tiles=col_tiles,
+                activation_buffer_id=0, weight_buffer_id=1, output_buffer_id=2,
+                activation_base=0, weight_base=0, output_base=op["output_base"],
+                output_stride=op["output_stride"], bias_base=0, scale=op["scale"], shift=op["shift"],
+                drain_mode=op["drain_mode"], bias_enable=int(op["bias"] is not None), last_op=1)
+            a_file = f"{op['a_name']}_A.hex"
+            if a_file not in written:
+                write_hex(os.path.join(MATMUL_DIR, a_file), op["a"], DATA_WIDTH)
+                written.add(a_file)
+            write_hex(os.path.join(MATMUL_DIR, f"{name}_B.hex"), op["b"], DATA_WIDTH)
+            write_hex(os.path.join(MATMUL_DIR, f"{name}_Y.hex"), op["y"], DATA_WIDTH)
+            write_hex(os.path.join(MATMUL_DIR, f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex"), descriptor, 32)
+            bias_file = "-"
+            if op["bias"] is not None:
+                bias_file = f"{name}_bias.hex"
+                write_hex(os.path.join(MATMUL_DIR, bias_file), op["bias"], ACC_WIDTH)
+            manifest.write(f"{name} {op['group']} {a_file} {name}_B.hex {bias_file} {name}_Y.hex "
+                           f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex\n")
 
-
-def recommended_options(**changes):
-    options = options_for(add="int", gelu="int",
-                          layernorm=by_name(LAYERNORM_OPTIONS, RECOMMENDED["layernorm"]),
-                          softmax=by_name(SOFTMAX_OPTIONS, RECOMMENDED["softmax"]),
-                          gelu_width=RECOMMENDED["gelu_width"], add_rounding=RECOMMENDED["add_rounding"],
-                          add_multiplier_width=RECOMMENDED["add_multiplier_width"])
-    options.update(changes)
-    return options
-
-
-def end_to_end_report(parameters, captures, labels, names, calibrations, selected):
-    """calibrations: name -> (target scales, matmul rounding). selected: the one that is dumped."""
-    reference = [int(np.argmax(fp["head_out"])) for fp in captures]
-    reference10 = [int(np.argmax(fp["head_out"][0, :10])) for fp in captures]
-    full = [int(np.argmax(fp["logits_full"])) for fp in captures]
-    count = len(captures)
-    final = f"L{LAYERS - 1}_x_out"
-
-    print(f"\nFP32 context, {count} images:")
-    print(f"  full 12-layer model, top-1 correct: {sum(a == b for a, b in zip(full, labels))} of {count}")
-    print(f"  2-layer truncated model, top-1 correct: {sum(a == b for a, b in zip(reference, labels))} of {count}; "
-          f"it predicts {len(set(reference))} different class(es) over the {count} images")
-
-    header = (f"  {'variant':36s} {'cos mean':>9s} {'cos min':>9s} {'final LN':>9s} {'logits':>8s} "
-              f"{'top-1 /1000':>12s} {'top-1 /10':>10s}")
-
-    def run(name, options):
-        stage_cosines, predictions, predictions10, forward = end_to_end(parameters, captures, options)
-        print(f"  {name:36s} {np.mean(stage_cosines[final]):9.5f} {min(stage_cosines[final]):9.5f} "
-              f"{np.mean(stage_cosines['final_ln']):9.4f} {np.mean(stage_cosines['head1000']):8.4f} "
-              f"{sum(a == b for a, b in zip(predictions, reference)):6d} of {count:2d} "
-              f"{sum(a == b for a, b in zip(predictions10, reference10)):4d} of {count:2d}")
-        return stage_cosines, predictions, forward
-
-    print(f"\nEnd to end over {count} images. 'cos' is the layer {LAYERS} output (197x192) against FP32, 'final LN'")
-    print("and 'logits' are the class row after the final LayerNorm and the 1000 logits. Top-1 is agreement with")
-    print("the FP32 2-layer truncated model.")
-    results = {}
-    for calibration, (target, rounding) in calibrations.items():
-        def float_ops(**changes):
-            return options_for(target=target, matmul_rounding=rounding, **changes)
-
-        print(f"\n{calibration}\n{header}")
-        run("INT8 tensors, float non-linear ops", float_ops())
-        run("add: 8-bit mult, floor", float_ops(add="int", add_rounding=False))
-        run("add: 8-bit mult, round", float_ops(add="int"))
-        run("add: 16-bit mult, round", float_ops(add="int", add_multiplier_width=16))
-        for width in GELU_WIDTHS:
-            run(f"gelu: {width}-bit in", float_ops(gelu="int", gelu_width=width))
-        for config in LAYERNORM_OPTIONS:
-            run(f"layernorm: {config.name}", float_ops(layernorm=config))
-        for config in SOFTMAX_OPTIONS:
-            run(f"softmax: {config.name}", float_ops(softmax=config))
-        results[calibration] = run("ALL INTEGER, recommended", recommended_options(target=target,
-                                                                                   matmul_rounding=rounding))
-
-    stream = {key for key in parameters.target if "_x_" in key}
-    percentile, maximum = (calibrations[name][0] for name in calibrations)
-    print(f"\nWhat the calibration changes (all integer, recommended precision)\n{header}")
-    for name, keys, rounding in (("percentile scales, floor", set(), False),
-                                 ("percentile scales, round", set(), True),
-                                 ("residual stream at max, floor", stream, False),
-                                 ("residual stream at max, round", stream, True),
-                                 ("all tensors at max, floor", set(maximum), False),
-                                 ("all tensors at max, round", set(maximum), True)):
-        target = {key: (maximum[key] if key in keys else percentile[key]) for key in percentile}
-        run(name, recommended_options(target=target, matmul_rounding=rounding))
-
-    print("\nALL INTEGER, recommended: cosine against FP32 at every stage, mean / worst over the images")
-    print(f"  {'stage':12s} " + "   ".join(f"{name[:28]:>28s}" for name in calibrations))
-    for stage in results[selected][0]:
-        print(f"  {stage:12s} " + "   ".join(
-            f"{np.mean(results[name][0][stage]):18.5f} {min(results[name][0][stage]):9.5f}" for name in calibrations))
-
-    stage_cosines, predictions, forward = results[selected]
-    print(f"\nPer image, {selected}, all integer (label / FP32 12-layer / FP32 2-layer / integer 2-layer):")
-    for index, file_name in enumerate(names):
-        print(f"  {file_name:36s} cos {stage_cosines[final][index]:.5f}  {labels[index]:4d} {full[index]:4d} "
-              f"{reference[index]:4d} {predictions[index]:4d}")
-    print(f"largest |accumulator| in the chained pass: {forward.acc_max} ({100.0 * forward.acc_max / 2 ** 31:.4f}% "
-          f"of 2^31)")
-    gains = [abs(c["gain_error"]) for c in forward.constants.values() if "gain_error" in c]
-    print(f"requantizer and add multipliers: largest distance from the wanted ratio {100 * max(gains):.2f}%")
-    print("LayerNorm and softmax intermediate magnitudes in the chained pass, in bits (sign not counted): "
-          + ", ".join(f"{op} {key} {int(value).bit_length()}" for op in ("layernorm", "softmax")
-                      for key, value in sorted(forward.widths[op].items())))
-
-
-def dump(parameters, fp, test_name, calibration, rounding):
-    """Per-stage tensors, tables and constants of the test image, recommended precision."""
-    forward = Forward(parameters, recommended_options(matmul_rounding=rounding))
-    forward.run(fp)
-    os.makedirs(VEC_DIR, exist_ok=True)
-    for stale in glob.glob(os.path.join(VEC_DIR, "*")):
-        os.remove(stale)
+    # golden/vectors/deit_forward: every stage, the tables and the constants
+    fresh(FORWARD_DIR)
 
     def write(name, values, width):
-        write_hex(os.path.join(VEC_DIR, name), values, width)
+        write_hex(os.path.join(FORWARD_DIR, name), values, width)
         return name
 
-    lines = [f"# {calibration}",
-             f"# image {test_name}; layernorm {RECOMMENDED['layernorm']}; softmax {RECOMMENDED['softmax']}; "
-             f"gelu {RECOMMENDED['gelu_width']}-bit; add {RECOMMENDED['add_multiplier_width']}-bit multipliers, "
-             f"rounding {int(RECOMMENDED['add_rounding'])}",
+    lines = [f"# image {test_name}; layernorm {LAYERNORM.name}; softmax {SOFTMAX.name}; gelu 256 entries; "
+             f"add {ADD_MULTIPLIER_WIDTH}-bit multipliers, rounded",
              "# tensor <name> <rows> <cols> <file>      INT8, row-major",
-             "# const  <op> <key> <value or file>       files: bias INT32, gain INT16, offset INT32,",
-             "#                                         gelu table INT8, exp table 12-bit, rsqrt table 13-bit"]
+             "# matmul <op> <scale> <shift>             requantizer constants; operands are in ../deit/",
+             f"# const  <op> <key> <value or file>       files: gain INT{GAIN_WIDTH}, offset INT{OFFSET_WIDTH}, "
+             f"gelu table INT8,",
+             f"#                                         exp table {SOFTMAX.exp_bits}-bit, rsqrt table "
+             f"{LAYERNORM.rsqrt_bits + 1}-bit"]
     for name, tensor, _scale, _key in forward.stages:
         lines.append(f"tensor {name} {tensor.shape[0]} {tensor.shape[1]} {write(name + '.hex', tensor, DATA_WIDTH)}")
-    config = by_name(LAYERNORM_OPTIONS, RECOMMENDED["layernorm"])
-    lines.append(f"const layernorm rsqrt_table {write('rsqrt_table.hex', rsqrt_table(config), config.rsqrt_bits + 1)}")
-    file_widths = {"bias": ACC_WIDTH, "gain": 16, "offset": 32, "table": DATA_WIDTH,
-                   "exp_table": by_name(SOFTMAX_OPTIONS, RECOMMENDED["softmax"]).exp_bits}
+    for op in forward.matmuls:
+        lines.append(f"matmul {op['name']} {op['scale']} {op['shift']}")
+    table = write("rsqrt_table.hex", rsqrt_table(LAYERNORM), LAYERNORM.rsqrt_bits + 1)
+    lines.append(f"const layernorm rsqrt_table {table}")
+    widths = {"gain": GAIN_WIDTH, "offset": OFFSET_WIDTH, "table": DATA_WIDTH, "exp_table": SOFTMAX.exp_bits}
     for op, constants in forward.constants.items():
         for key, value in constants.items():
-            if value is None or key == "gain_error":
-                continue
             if isinstance(value, np.ndarray):
-                value = write(f"{op}_{key}.hex", value, file_widths[key])
+                value = write(f"{op}_{key}.hex", value, widths[key])
             lines.append(f"const {op} {key} {value}")
-    with open(os.path.join(VEC_DIR, "forward_ops.txt"), "w") as manifest:
+    with open(os.path.join(FORWARD_DIR, "forward_ops.txt"), "w") as manifest:
         manifest.write("\n".join(lines) + "\n")
 
-    # the weights are the ones gen_deit_vectors.py already wrote
-    for name, (w_q, _scale, _bias) in parameters.linear.items():
-        existing = read_hex(os.path.join(DEIT_DIR, f"{name}_B.hex"), DATA_WIDTH)
-        assert np.array_equal(existing, w_q.reshape(-1)), name
-    print(f"\nwrote {len(os.listdir(VEC_DIR))} files to {VEC_DIR} "
-          f"(weights are the *_B.hex files in {os.path.relpath(DEIT_DIR, GOLDEN_DIR)}, checked equal)")
+    # the non-linear ops as engine ops. nonlinear_ops.txt has one line per op: name, kind, a file, b file or
+    # "-", y file, descriptor file, and for layernorm the gain and offset files. Every op is there twice:
+    # writing to a third buffer, and in place over operand a.
+    stage_of = {id(tensor): name for name, tensor, _scale, _key in forward.stages}
+    with open(os.path.join(FORWARD_DIR, "nonlinear_ops.txt"), "w") as manifest:
+        for op in forward.row_ops:
+            rows, length = op["a"].shape
+            for suffix, output_buffer in (("", 2), ("_inplace", 0)):
+                name = op["name"] + suffix
+                descriptor = pack_descriptor(
+                    opcode=ROW_OPCODES[op["kind"]], rows_total=rows, inner_dim=op.get("inner_dim", 0),
+                    cols_total=length, row_tiles=-(-rows // SYS_ROW), col_tiles=0,
+                    activation_buffer_id=0, weight_buffer_id=1, output_buffer_id=output_buffer,
+                    activation_base=0, weight_base=0, output_base=0, output_stride=length,
+                    bias_base=op["bias_base"], scale=op.get("scale", 0), shift=op.get("shift", 0),
+                    drain_mode=0, bias_enable=0, last_op=1)
+                write(f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex", descriptor, 32)
+                a_file = stage_of[id(op["a"])] + ".hex" if id(op["a"]) in stage_of else write(
+                    f"{op['name']}_a.hex", op["a"], DATA_WIDTH)
+                b_file = stage_of[id(op["b"])] + ".hex" if "b" in op else "-"
+                extra = op.get("files", ("-", "-"))
+                manifest.write(f"{name} {op['kind']} {a_file} {b_file} {stage_of[id(op['y'])]}.hex "
+                               f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex {extra[0]} {extra[1]}\n")
+    print(f"\nwrote {len(os.listdir(MATMUL_DIR))} files to {os.path.relpath(MATMUL_DIR, GOLDEN_DIR)} "
+          f"({len(forward.matmuls)} engine ops) and {len(os.listdir(FORWARD_DIR))} files to "
+          f"{os.path.relpath(FORWARD_DIR, GOLDEN_DIR)}, test image {test_name}")
 
 
 def main():
     torch.manual_seed(0)
     model = timm.create_model(MODEL_NAME, pretrained=True).eval()
     for block in model.blocks:
-        block.attn.fused_attn = False
+        block.attn.fused_attn = False  # so the softmax output passes through attn_drop
     cfg = model.pretrained_cfg
-    files = sorted(glob.glob(os.path.join(IMAGE_DIR, "*.JPEG")))
-    names = [os.path.basename(file_name) for file_name in files]
     synsets = timm.data.ImageNetInfo("imagenet-1k").label_names()
-    labels = [synsets.index(name.split("_")[0]) for name in names]
 
-    captures = [capture_all(model, load_image(file_name, cfg)) for file_name in files]
-    # the same calibration as gen_deit_vectors.py: every image but the first
-    percentile, maximum = {}, {}
-    for key in captures[0]:
-        values = np.concatenate([np.abs(fp[key]).reshape(-1) for fp in captures[1:]])
-        percentile[key] = float(np.percentile(values, ACTIVATION_PERCENTILE)) / DATA_MAX
-        maximum[key] = float(values.max()) / DATA_MAX
-    percentile["head_out"] = maximum["head_out"]   # nothing may clip before the argmax
-    calibrations = {
-        f"A: {ACTIVATION_PERCENTILE} percentile scales, requantizer floors": (percentile, False),
-        "B: max scales, half an LSB added to every matmul bias": (maximum, True),
-    }
-    selected = list(calibrations)[1 if "--max" in sys.argv else 0]
-    target, rounding = calibrations[selected]
-    parameters = Model(model, target)
+    def images(*directories):
+        return [name for directory in directories for name in sorted(glob.glob(os.path.join(directory, "*.JPEG")))]
 
-    position = model.pos_embed.detach().numpy().astype(np.float64)[0]
-    assert np.allclose(captures[0]["embed_out"] + position[1:], captures[0]["L0_x_in"][1:], atol=1e-4)
-    assert np.allclose(parameters.class_row, captures[0]["L0_x_in"][0:1], atol=1e-4)
+    calibration, heldout = images(CALIBRATION_DIR), images(IMAGE_DIR, HELDOUT_DIR)
+    assert len(calibration) >= CALIBRATION_MIN and len(heldout) >= HELDOUT_MIN, \
+        "images missing: run scripts/fetch_images.sh"
+    assert not {os.path.basename(f) for f in calibration} & {os.path.basename(f) for f in heldout}
 
-    print(f"model {MODEL_NAME}, {len(files)} images, scales from images 2..{len(files)}, test image {names[0]}")
-    print(f"per-op report and dump use calibration {selected}")
-    per_op_report(parameters, captures)
-    end_to_end_report(parameters, captures, labels, names, calibrations, selected)
+    def label(file_name):
+        return synsets.index(os.path.basename(file_name).split("_")[0])
+
+    # pass 1: the scale of a tensor is its largest magnitude over the calibration images / 127
+    largest = {}
+    for file_name in calibration:
+        for key, tensor in capture_all(model, load_image(file_name, cfg)).items():
+            largest[key] = max(largest.get(key, 0.0), float(np.abs(tensor).max()))
+    parameters = Model(model, {key: value / DATA_MAX for key, value in largest.items()})
+
+    fp = capture_all(model, load_image(heldout[0], cfg))
+    assert np.allclose(fp["embed_out"] + parameters.addend_real(), fp["L0_x_in"], atol=1e-4)
+
+    print(f"model {MODEL_NAME}; scales from {len(calibration)} calibration images (max); "
+          f"{len(heldout)} held-out images; layernorm {LAYERNORM.name}, softmax {SOFTMAX.name}")
+    # pass 2: evaluate on both sets
+    evaluations = {}
+    for title, files in (("IN-SAMPLE (the calibration images)", calibration),
+                         ("HELD-OUT (never seen by the calibration)", heldout)):
+        evaluation = Evaluation(parameters)
+        for file_name in files:
+            evaluation.add_image(capture_all(model, load_image(file_name, cfg)), label(file_name))
+        evaluation.report(title)
+        evaluations[title] = evaluation
+
+    print("\nAll integer: cosine against FP32 at every stage, mean / worst")
+    print(f"  {'stage':12s} {'in-sample':>20s} {'held-out':>20s}")
+    tables = [evaluation.stage_table() for evaluation in evaluations.values()]
+    for stage in tables[0]:
+        print(f"  {stage:12s} " + "  ".join(f"{np.mean(t[stage]):10.5f} {min(t[stage]):9.5f}" for t in tables))
+
     if "--no-dump" not in sys.argv:
-        dump(parameters, captures[0], names[0], selected, rounding)
+        dump(parameters, fp, os.path.basename(heldout[0]))
 
 
 if __name__ == "__main__":
