@@ -51,6 +51,10 @@
 // after the address. While busy is high host writes are ignored and the read
 // data is not meaningful.
 //
+// GELU_ROM_FILE, EXP_ROM_FILE and RSQRT_ROM_FILE name the $readmemh images of
+// the row ops' tables, relative to rtl/. The defaults are the tables of the
+// 224 x 224 model; another model configuration passes its own.
+//
 // The descriptor field widths, BUFFER_COUNT, BIAS_DEPTH and DESCRIPTOR_COUNT
 // come from vit_config_pkg and cannot be overridden per instance.
 //////////////////////////////////////////////////////////////////////////////////
@@ -62,6 +66,10 @@ module matmul_engine #(
     parameter  int ACC_WIDTH  = vit_config_pkg::ACC_WIDTH,
     parameter  bit [vit_config_pkg::BUFFER_COUNT-1:0][31:0] BUFFER_DEPTH
                               = {vit_config_pkg::BUFFER_COUNT{32'(vit_config_pkg::BANK_DEPTH)}},
+    // ROM images of the row ops' tables; they depend on the model's scales
+    parameter  string GELU_ROM_FILE  = "rom/gelu_rom.hex",
+    parameter  string EXP_ROM_FILE   = "rom/exp_rom.hex",
+    parameter  string RSQRT_ROM_FILE = "rom/rsqrt_rom.hex",
     localparam int LANES                  = (SYS_ROW > SYS_COL) ? SYS_ROW : SYS_COL,
     localparam int BUFFER_ID_WIDTH        = vit_config_pkg::BUFFER_ID_WIDTH,
     localparam int ADDRESS_WIDTH          = vit_config_pkg::ADDRESS_WIDTH,
@@ -395,7 +403,8 @@ module matmul_engine #(
 
     gelu_lut #(
         .LANES      (SYS_ROW),
-        .DATA_WIDTH (DATA_WIDTH)
+        .DATA_WIDTH (DATA_WIDTH),
+        .ROM_FILE   (GELU_ROM_FILE)
     ) gelu_inst (
         .CLK          (CLK),
         .reset        (reset),
@@ -431,7 +440,8 @@ module matmul_engine #(
 
     layernorm #(
         .LANES      (SYS_ROW),
-        .DATA_WIDTH (DATA_WIDTH)
+        .DATA_WIDTH (DATA_WIDTH),
+        .ROM_FILE   (RSQRT_ROM_FILE)
     ) layernorm_inst (
         .CLK                     (CLK),
         .reset                   (reset),
@@ -460,7 +470,8 @@ module matmul_engine #(
 
     softmax #(
         .LANES      (SYS_ROW),
-        .DATA_WIDTH (DATA_WIDTH)
+        .DATA_WIDTH (DATA_WIDTH),
+        .ROM_FILE   (EXP_ROM_FILE)
     ) softmax_inst (
         .CLK          (CLK),
         .reset        (reset),
