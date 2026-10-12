@@ -17,7 +17,7 @@
 // simply by naming its id: nothing is copied. The three ids of an op must
 // differ, because a buffer has one read port and one write port.
 //
-// Row ops (OPCODE_ADD, OPCODE_GELU, OPCODE_LAYERNORM; see vit_config_pkg) work on tensors in row banks, SYS_ROW
+// Row ops (OPCODE_ADD, OPCODE_GELU, OPCODE_LAYERNORM, OPCODE_SOFTMAX; see vit_config_pkg) work on tensors in row banks, SYS_ROW
 // rows at a time. row_op_reader issues the read addresses, the op's datapath
 // processes the read data and row_op_writer writes the result. A row op may
 // write to the buffer it reads (in place): a word is written only after it
@@ -101,6 +101,7 @@ module matmul_engine #(
     import vit_config_pkg::OPCODE_ADD;
     import vit_config_pkg::OPCODE_GELU;
     import vit_config_pkg::OPCODE_LAYERNORM;
+    import vit_config_pkg::OPCODE_SOFTMAX;
 
     localparam int BUFFER_COUNT            = vit_config_pkg::BUFFER_COUNT;
     localparam int BANK_DEPTH_MAX          = vit_config_pkg::BANK_DEPTH_MAX;
@@ -183,7 +184,7 @@ module matmul_engine #(
     assign busy             = state != STATE_IDLE;
     assign controller_start = state == STATE_LAUNCH && descriptor.opcode == OPCODE_MATMUL;
     assign is_row_op        = descriptor.opcode == OPCODE_ADD || descriptor.opcode == OPCODE_GELU
-                              || descriptor.opcode == OPCODE_LAYERNORM;
+                              || descriptor.opcode == OPCODE_LAYERNORM || descriptor.opcode == OPCODE_SOFTMAX;
     assign row_op_start     = state == STATE_LAUNCH && is_row_op;
 
     always_ff @(posedge CLK) begin
@@ -338,8 +339,10 @@ module matmul_engine #(
     // passes over a row tile, minus 1; only a multi-pass op waits for pass_ready
     logic [ROW_OP_PASS_WIDTH-1:0] row_op_passes;
     logic                         layernorm_pass_ready;
+    logic                         softmax_pass_ready;
 
-    assign row_op_passes = (descriptor.opcode == OPCODE_LAYERNORM) ? ROW_OP_PASS_WIDTH'(1) : '0;
+    assign row_op_passes = (descriptor.opcode == OPCODE_LAYERNORM) ? ROW_OP_PASS_WIDTH'(1)
+                           : (descriptor.opcode == OPCODE_SOFTMAX) ? ROW_OP_PASS_WIDTH'(2) : '0;
 
     row_op_reader #(
         .LANES        (SYS_ROW),
@@ -355,7 +358,7 @@ module matmul_engine #(
         .passes          (row_op_passes),
         .base_a          (descriptor.activation_base),
         .base_b          (descriptor.weight_base),
-        .pass_ready      (layernorm_pass_ready),
+        .pass_ready      ((descriptor.opcode == OPCODE_SOFTMAX) ? softmax_pass_ready : layernorm_pass_ready),
         .read_address_a  (row_read_address_a),
         .read_address_b  (row_read_address_b),
         .data_valid      (row_data_valid),
@@ -450,17 +453,40 @@ module matmul_engine #(
         .y_out                   (layernorm_result)
     );
 
+    localparam int SOFTMAX_SELECT_WIDTH = $clog2(vit_config_pkg::SOFTMAX_TABLE_COUNT);
+
+    logic                               softmax_valid;
+    logic [SYS_ROW-1:0][DATA_WIDTH-1:0] softmax_result;
+
+    softmax #(
+        .LANES      (SYS_ROW),
+        .DATA_WIDTH (DATA_WIDTH)
+    ) softmax_inst (
+        .CLK          (CLK),
+        .reset        (reset),
+        .table_select (descriptor.bias_base[SOFTMAX_SELECT_WIDTH-1:0]),
+        .valid_in     (row_data_valid && descriptor.opcode == OPCODE_SOFTMAX),
+        .pass_in      (row_data_pass),
+        .first_in     (row_data_first),
+        .last_in      (row_data_last),
+        .score_in     (row_data_a),
+        .pass_ready   (softmax_pass_ready),
+        .valid_out    (softmax_valid),
+        .p_out        (softmax_result)
+    );
+
     // result register: the datapath of the running row op
     always_ff @(posedge CLK) begin
         if (reset) begin
             row_result_valid <= 1'b0;
         end
         else begin
-            row_result_valid <= add_valid || gelu_valid || layernorm_valid;
+            row_result_valid <= add_valid || gelu_valid || layernorm_valid || softmax_valid;
         end
         case (descriptor.opcode)
             OPCODE_GELU:      row_result_data <= gelu_result;
             OPCODE_LAYERNORM: row_result_data <= layernorm_result;
+            OPCODE_SOFTMAX:   row_result_data <= softmax_result;
             default:          row_result_data <= add_sum;
         endcase
     end

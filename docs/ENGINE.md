@@ -96,7 +96,7 @@ after changing the struct.
 
 | Field | Bits | Width | Meaning |
 |---|---|---|---|
-| `opcode` | 152:149 | 4 | Operation. 0 = MATMUL; any other value is skipped. |
+| `opcode` | 152:149 | 4 | Operation. 0 = MATMUL, 1 = ADD, 2 = GELU, 3 = LAYERNORM, 4 = SOFTMAX; any other value is skipped. |
 | `rows_total` | 148:141 | 8 | M, rows of the activation operand and of the result. |
 | `inner_dim` | 140:131 | 10 | K, the dimension summed over. At least 1. |
 | `cols_total` | 130:121 | 10 | N, columns of the weight operand and of the result. |
@@ -173,6 +173,53 @@ The bias store has one bank per array column: bias[col] is in bank
 col % SYS_COL at address `bias_base` + col / SYS_COL. A slice of a stored
 weight that starts at a whole column tile is selected with `weight_base` and
 `bias_base` alone.
+
+## Row ops
+
+The non-linear ops run through the same descriptor table as the matmuls. A
+row op works on a rows_total x cols_total tensor in row banks, SYS_ROW rows
+per cycle: `row_op_reader` issues the read addresses, the op's datapath
+processes the data and `row_op_writer` writes the result in row banks. They
+reach the pool through registers of their own (a read address register per
+buffer, read data registers, a result register), so no matmul path changed.
+
+| Op | Opcode | Module | Passes per row tile | Fields besides the common ones |
+|---|---|---|---|---|
+| Residual add | 1 | `residual_add` | 1 | `weight_buffer_id`, `weight_base` = second operand; `scale` = multiplier of the first, `bias_base[7:0]` = multiplier of the second, `shift` |
+| GELU | 2 | `gelu_lut` | 1 | `bias_base` = table (0, 1: encoder layer) |
+| LayerNorm | 3 | `layernorm` | 2 | `bias_base` = address of the row's first gain/offset pair, `shift` = output shift, `inner_dim` = epsilon |
+| Softmax | 4 | `softmax` | 3 | `bias_base` = exp table (layer * 3 + head) |
+
+The common fields are `rows_total`, `row_tiles`, `cols_total` (the row
+length), `activation_buffer_id` and `activation_base` (the operand),
+`output_buffer_id`, `output_base`, `output_stride` and `last_op`.
+
+- **Arithmetic** is in the header of each module and, bit for bit, in
+  `golden/nonlinear_ops.py`.
+- **In place.** A row op may write to the buffer it reads; a word is written
+  only after it was read. The two operands of an add must be in different
+  buffers. The checks are per opcode.
+- **Tables.** The GELU, exp and reciprocal-square-root tables are ROMs loaded
+  with `$readmemh` from `rtl/rom/`, written by `golden/gen_deit_forward.py`.
+- **LayerNorm constants.** Gain (INT16) and offset (INT32) per column are
+  written by the host: present `host_address`, `host_layernorm_write_gain`,
+  `host_layernorm_write_offset` and `host_layernorm_write_enable` for one
+  cycle while `busy` is low. The memory holds 1,024 pairs.
+- **Row length.** LayerNorm needs a row of at most 255 elements; LayerNorm
+  and softmax need a row longer than 6 elements.
+
+Cycles for one op, with tiles = ceil(rows / SYS_ROW) and N the row length
+(`golden/cycle_model.py`, equal to the simulation):
+
+| Op | Cycles | 197 rows |
+|---|---|---|
+| Residual add | 4 + tiles * N + 16 | 4,820 (N = 192) |
+| GELU | 4 + tiles * N + 14 | 19,218 (N = 768) |
+| LayerNorm | 4 + tiles * (2N + 18) + 20 | 10,074 (N = 192) |
+| Softmax | 4 + tiles * (3N + 51) + 18 | 16,072 (N = 197) |
+
+One encoder layer has 2 LayerNorms, 3 softmaxes, 1 GELU and 2 adds: 97,222
+cycles, 5.6% on top of its 1,747,050 matmul cycles.
 
 ## Host port
 
@@ -300,8 +347,9 @@ reloaded.
 - **Smallest op.** K + SYS_ROW + SYS_COL - 2 + DSP_LATENCY must be at least
   BUFFER_READ_LATENCY + 1, so that the bias of a tile is read in time. That
   holds for every array of 2x2 or larger.
-- **Only MATMUL.** LayerNorm, softmax, GELU and the residual add are not in
-  the engine.
+- **Row ops.** The residual add, GELU, LayerNorm and softmax are in the engine
+  on the branch `nonlinear-rtl`; see "Row ops" below. The tag `engine-v1.1`
+  has only MATMUL.
 - **No reset on the datapath.** Only control registers are reset.
 
 ## Verification and timing

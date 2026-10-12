@@ -569,6 +569,10 @@ def dump(parameters, fp, test_name):
               np.concatenate([forward.constants[op["name"]]["table"] for op in forward.row_ops
                               if op["kind"] == "gelu"]), DATA_WIDTH)
     write_hex(os.path.join(ROM_DIR, "rsqrt_rom.hex"), rsqrt_table(LAYERNORM), LAYERNORM.rsqrt_bits + 1)
+    exp_tables = [forward.constants[op["name"]]["exp_table"] for op in forward.row_ops if op["kind"] == "softmax"]
+    exp_rom = np.zeros(PARAMS.get("SOFTMAX_TABLE_COUNT", 8) * 256, dtype=np.int64)   # unused tables are zero
+    exp_rom[:256 * len(exp_tables)] = np.concatenate(exp_tables)
+    write_hex(os.path.join(ROM_DIR, "exp_rom.hex"), exp_rom, SOFTMAX.exp_bits)
 
     # the non-linear ops as engine ops. nonlinear_ops.txt has one line per op: name, kind, a file, b file or
     # "-", y file, descriptor file, and for layernorm the gain and offset files. Every op is there twice:

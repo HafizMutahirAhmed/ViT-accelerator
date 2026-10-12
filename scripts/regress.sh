@@ -27,6 +27,7 @@ runs=(
     "residual_add"
     "gelu_lut"
     "layernorm"
+    "softmax"
     "matmul_engine_nonlinear"
 )
 

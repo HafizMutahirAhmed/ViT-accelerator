@@ -79,7 +79,7 @@ def unpack_descriptor(words):
 
 # what each descriptor field means, for the table in docs/ENGINE.md
 DESCRIPTOR_FIELD_NOTES = {
-    "opcode": "Operation. 0 = MATMUL; any other value is skipped.",
+    "opcode": "Operation. 0 = MATMUL, 1 = ADD, 2 = GELU, 3 = LAYERNORM, 4 = SOFTMAX; any other value is skipped.",
     "rows_total": "M, rows of the activation operand and of the result.",
     "inner_dim": "K, the dimension summed over. At least 1.",
     "cols_total": "N, columns of the weight operand and of the result.",

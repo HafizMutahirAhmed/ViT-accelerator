@@ -87,6 +87,8 @@ package vit_config_pkg;
     parameter  OPCODE_ADD       = 4'd1;
     parameter  OPCODE_GELU      = 4'd2;
     parameter  OPCODE_LAYERNORM = 4'd3;
+    //   OPCODE_SOFTMAX    one operand; bias_base = which exp table
+    parameter  OPCODE_SOFTMAX   = 4'd4;
 
     // row ops: passes over a row tile are counted in this many bits
     parameter  ROW_OP_PASS_WIDTH = 2;
@@ -117,6 +119,16 @@ package vit_config_pkg;
     // cycles from a pass 1 input of layernorm to its output: operand, n * x,
     // centre, times reciprocal, shift, times gain, plus offset, shift, clip
     parameter  LAYERNORM_LATENCY = 9;
+
+    // softmax: one exp table per attention head and layer (6 used); an entry
+    // has EXP_BITS bits; the quotient 127 / sum has QUOTIENT_FRAC more
+    // fraction bits than an entry
+    parameter  SOFTMAX_TABLE_COUNT   = 8;
+    parameter  SOFTMAX_EXP_BITS      = 12;
+    parameter  SOFTMAX_QUOTIENT_FRAC = 10;
+    // cycles from a pass 2 input of softmax to its output: score, distance,
+    // ROM read, ROM output, product, round and shift, clip
+    parameter  SOFTMAX_LATENCY = 7;
 
     // One op of the engine. The first field is the most significant. In the
     // descriptor memory the struct sits in the low DESCRIPTOR_WIDTH bits of a

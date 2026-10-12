@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 // Self-checking testbench for the row ops of matmul_engine (the non-linear
-// ops: residual add, GELU, LayerNorm), run through the descriptor table like a matmul.
+// ops: residual add, GELU, LayerNorm, softmax), run through the descriptor table like a matmul.
 //
 // For every op in the manifest whose kind this testbench knows, it writes the
 // one-op descriptor table, fills the output region with a known pattern,
@@ -31,6 +31,7 @@ module tb_matmul_engine_nonlinear #(
     import vit_config_pkg::OPCODE_ADD;
     import vit_config_pkg::OPCODE_GELU;
     import vit_config_pkg::OPCODE_LAYERNORM;
+    import vit_config_pkg::OPCODE_SOFTMAX;
 
     localparam int DATA_WIDTH              = vit_config_pkg::DATA_WIDTH;
     localparam int ACC_WIDTH               = vit_config_pkg::ACC_WIDTH;
@@ -188,7 +189,8 @@ module tb_matmul_engine_nonlinear #(
         if (!descriptor.last_op || row_tiles != (rows + SYS_ROW - 1) / SYS_ROW
             || (kind == "add" && descriptor.opcode != OPCODE_ADD)
             || (kind == "gelu" && descriptor.opcode != OPCODE_GELU)
-            || (kind == "layernorm" && descriptor.opcode != OPCODE_LAYERNORM)) begin
+            || (kind == "layernorm" && descriptor.opcode != OPCODE_LAYERNORM)
+            || (kind == "softmax" && descriptor.opcode != OPCODE_SOFTMAX)) begin
             $fatal(1, "FAIL: descriptor table %s does not fit this testbench", descriptor_file);
         end
         if (rows*cols > VECTOR_WORDS_MAX || output_base + row_tiles*stride > BUFFER_DEPTH) begin
@@ -346,7 +348,7 @@ module tb_matmul_engine_nonlinear #(
         while (!$feof(manifest)) begin
             fields = $fscanf(manifest, "%s %s %s %s %s %s %s %s\n",
                              op_name, kind, a_file, b_file, y_file, descriptor_file, extra_1, extra_2);
-            if (fields == 8 && (kind == "add" || kind == "gelu" || kind == "layernorm")) begin
+            if (fields == 8 && (kind == "add" || kind == "gelu" || kind == "layernorm" || kind == "softmax")) begin
                 run_op(op_name, kind, a_file, b_file, y_file, descriptor_file, extra_1, extra_2);
             end
         end

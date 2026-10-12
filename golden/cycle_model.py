@@ -15,11 +15,10 @@ For one op on an S_ROW x S_COL array:
 The latencies come from rtl/vit_config_pkg.sv. The ops are the real DeiT-Tiny
 ops listed in golden/vectors/deit/deit_ops.txt.
 
-The non-linear ops (residual add, GELU, LayerNorm, softmax) are not built. Their
-cycle counts here are the plan: one row unit per bank of the row-bank layout,
-so SYS_ROW rows are processed together and each pass over a row tile takes one
-cycle per row element. The pipeline depths in PLAN are estimates until there
-is RTL to measure.
+The non-linear ops (residual add, GELU, LayerNorm, softmax) are row ops of the
+engine: SYS_ROW rows are processed together and each pass over a row tile
+takes one cycle per row element. The formulas below match
+tb_matmul_engine_nonlinear.
   add         cycles = 4 + tiles * N + ROW_OP_READ_LATENCY + RESIDUAL_ADD_LATENCY + 5
                        built; the 5 are the result register, the writer register, the
                        pool write register and two cycles to end the op. Measured in
@@ -30,7 +29,10 @@ is RTL to measure.
                        built; statistics pass, 12 cycles from its last data to the
                        reciprocal, output pass. Measured 10,074 for 197 x 192 and 426
                        for the class row.
-  softmax     cycles = 4 + tiles * (3 * N + gap) + tail        max pass, sum pass, output pass
+  softmax     cycles = 4 + tiles * (3 * N + 2 * ROW_OP_READ_LATENCY + 39)
+                       + ROW_OP_READ_LATENCY + SOFTMAX_LATENCY + 5
+                       built; max pass, sum pass, a 29-step division, output pass.
+                       Measured 16,072 for 197 x 197.
   tiles = ceil(rows / SYS_ROW), N = row length
   tail  = BUFFER_READ_LATENCY + the op's output pipeline + POOL_WRITE_LATENCY
 """
@@ -54,34 +56,20 @@ def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
     return tiles * (inner + flush) + overhead, tiles, tiles * flush, rows * inner * cols / (sys_row * sys_col)
 
 
-# planned pipeline depths of the non-linear units, in cycles
-PLAN = {
-    "softmax_max": 1,           # compare after the last score
-    "softmax_sum": 4,           # distance 1, exp table 2, accumulate 1
-    "softmax_divide": 20,       # one quotient bit per cycle
-    "softmax_pipeline": 6,      # distance 1, exp table 2, multiply 2, round/shift/clip 1
-}
-
-
 def nonlinear_cycles(kind, rows, length, lanes):
-    """Planned cycles of one non-linear op on rows x length, `lanes` rows at a time."""
+    """Cycles of one non-linear op on rows x length, `lanes` rows at a time."""
     tiles = -(-rows // lanes)
-    read, write = PARAMS["BUFFER_READ_LATENCY"], PARAMS["POOL_WRITE_LATENCY"]
+    write = PARAMS["POOL_WRITE_LATENCY"]
     if kind in ("add", "gelu"):
         latency = PARAMS["RESIDUAL_ADD_LATENCY"] if kind == "add" else PARAMS["GELU_LATENCY"]
         return 4 + tiles * length + PARAMS["ROW_OP_READ_LATENCY"] + latency + 2 + write + 2
-    if False:
-        pass
     elif kind == "layernorm":
         return (4 + tiles * (2 * length + PARAMS["ROW_OP_READ_LATENCY"] + 12)
                 + PARAMS["ROW_OP_READ_LATENCY"] + PARAMS["LAYERNORM_LATENCY"] + 2 + write + 2)
     elif kind == "softmax":
-        per_tile = (3 * length + read + PLAN["softmax_max"] + read + PLAN["softmax_sum"]
-                    + PLAN["softmax_divide"])
-        pipeline = PLAN["softmax_pipeline"]
-    else:
-        raise ValueError(kind)
-    return 4 + tiles * per_tile + read + pipeline + write
+        return (4 + tiles * (3 * length + 2 * PARAMS["ROW_OP_READ_LATENCY"] + 39)
+                + PARAMS["ROW_OP_READ_LATENCY"] + PARAMS["SOFTMAX_LATENCY"] + 2 + write + 2)
+    raise ValueError(kind)
 
 
 # the non-linear ops of one encoder layer: (name, kind, count, rows, row length)
@@ -149,7 +137,7 @@ def main():
         print(f"{f'{size}x{size}':>6s} {total:9d} {ideal_total:9.0f} {100 * ideal_total / total:10.1f}% "
               f"{flush_total:8d} {100 * flush_total / total:10.1f}%")
 
-    print(f"\nnon-linear ops, planned (not built), {sys_row} rows at a time:")
+    print(f"\nnon-linear ops, {sys_row} rows at a time:")
     print(f"{'op':28s} {'shape':>9s} {'count':>5s} {'cycles each':>11s} {'total':>8s}")
     matmul_layer = sum(op_cycles(rows, inner, cols, column_select, sys_row, sys_col)[0]
                        for _name, group, rows, inner, cols, column_select in ops if group == "L0")
