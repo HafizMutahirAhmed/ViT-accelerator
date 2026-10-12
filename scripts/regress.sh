@@ -31,6 +31,9 @@ runs=(
     "matmul_engine_nonlinear"
     "encoder_program"
     "encoder_program_mnist112"
+    "host_link"
+    "host_replay"
+    "arty_top"
 )
 
 snapshot_of() {

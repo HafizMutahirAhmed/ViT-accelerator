@@ -19,6 +19,21 @@ built yet.
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
 - [docs/SCHEDULE.md](docs/SCHEDULE.md): schedule
 
+## Running on a board
+
+The first board is a Digilent Arty A7-100T, with a reduced configuration that
+fits it: a 112 x 112 input (50 tokens), MNIST digits, weights sent per group
+of matmuls over the USB-UART. See [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md).
+
+```sh
+vivado -mode batch -source boards/arty_a7/build.tcl      # sim/arty_a7_build/arty_top.bit
+python3 host/run_image.py --port /dev/ttyUSB1 --digit 0 --check
+python3 host/run_image.py --model --digit 0 --golden     # no board: the software model
+```
+
+`host/run_image.py` needs the program files of `scripts/gen_vectors.sh`
+(`golden/vectors/mnist112/`), numpy, Pillow and pyserial.
+
 ## Folder layout
 
 | Folder | Contents |
@@ -28,6 +43,8 @@ built yet.
 | `golden/` | Python golden model and vector generators. Vectors are in `golden/vectors/`, the DeiT ones in `golden/vectors/deit/`. |
 | `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them) and Vivado Tcl scripts. |
 | `docs/` | Spec, engine description and schedule. |
+| `boards/` | One directory per board: top level, transport, constraints, build script. Nothing board-specific is anywhere else. |
+| `host/` | Host software: the protocol, `run_image.py`, probe training, and a software model of the board. |
 | `legacy/` | Files from the earlier weight-stationary design, not used. |
 
 `ViT-implementation.xpr` is the Vivado project. Simulation output goes to

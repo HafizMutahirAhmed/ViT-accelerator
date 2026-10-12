@@ -16,6 +16,7 @@ The report compares every stage with FP32 on the calibration digits
 (in-sample) and on test digits (held-out).
 """
 
+import json
 import os
 import sys
 
@@ -73,6 +74,12 @@ def main():
     label = int(test_set.targets[config.TEST_IMAGE])
     print(f"test digit {config.TEST_IMAGE}: label {label}, mean-of-patch-rows answer "
           f"{int(np.argmax(scores['head_mean'][1:].sum(0)))}, class-row answer {int(np.argmax(scores['head_class'][0]))}")
+    # what host/run_image.py needs besides the program files
+    with open(os.path.join(config.VEC_DIR, "host_config.json"), "w") as f:
+        json.dump({"size": config.preprocess.SIZE, "tokens": config.TOKENS,
+                   "input_scale": parameters.target["embed_in"],
+                   "rom_dir": os.path.relpath(config.ROM_DIR, config.REPO_DIR),
+                   "test_digit": config.TEST_IMAGE}, f, indent=1)
     with open(os.path.join(config.VEC_DIR, "expected_answer.txt"), "w") as f:
         f.write(f"{label} {int(np.argmax(scores['head_mean'][1:].sum(0)))} {int(np.argmax(scores['head_class'][0]))}\n")
 
