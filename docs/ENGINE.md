@@ -11,7 +11,7 @@ One op computes, in INT8 with INT32 accumulation,
 for an M x K activation and a K x N weight. Operands and results live in a pool
 of block RAM buffers. An op names its two input buffers and its output buffer
 by id, so the output of one op becomes the input of a later op without any
-copy. The frozen version is tagged `engine-v1`.
+copy. The frozen version is tagged `engine-v1.1`.
 
 ## Block diagram
 
@@ -333,7 +333,8 @@ Out-of-context place-and-route on the XC7A200T-1 (`xc7a200tfbg484-1`) with a
 Every PE maps to exactly one DSP48E1 at both sizes. The buffer depths are the
 same tensors at each size: one layer of weights, one 197x768 activation buffer
 and three 197x197 buffers. The 8x8 column is the build with the 256-entry
-descriptor memory; the `engine-v1` tag, with 64 entries, had WNS +0.191 ns.
+descriptor memory, tagged `engine-v1.1`; commit `eeddbd6`, with 64 entries, had
+WNS +0.191 ns.
 The 16x16 column was built with 64 entries.
 
 The block RAM count is higher than the tensors need because Vivado rounds a
