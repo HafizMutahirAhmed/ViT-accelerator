@@ -292,34 +292,81 @@ ops exactly.
 A layer at 8x8 uses 91.3% of the array's multiply capacity; 7.2% of the
 cycles are the zero-fed flush between tiles.
 
-## Weight reload between phases
+## The forward pass as one descriptor program
 
-The weight buffer holds one phase at a time and the host reloads it between
-phases. Activations stay in their own buffers across a reload.
+`golden/layer_program.py` lays the whole 2-layer pass out on the buffer pool
+and writes the descriptor table, the host load images and the golden tensor of
+every stage. `tb_encoder_program` runs it. Nothing is copied between ops.
 
-| Phase | Weight words per bank (8x8) | Bias words per bank |
-|---|---|---|
-| Patch embedding (768x192) | 18,432 | 24 |
-| Encoder layer 0 | 55,296 | 216 |
-| Encoder layer 1 | 55,296 | 216 |
-| Classifier (192x10) | 384 | 2 |
+### Phases
 
-Inside a layer the weights are stored back to back: qkv at `weight_base` 0,
-proj at 13,824, fc1 at 18,432, fc2 at 36,864. The bias bases are 0, 72, 96
-and 192.
+The descriptor table is written once. A phase is a run of descriptors ending
+with `last_op`; the host loads the phase's weights, biases and LayerNorm
+constants, pulses `start` with the phase's first entry and waits for `done`.
+The residual stream stays in the engine from phase to phase.
 
-Reload sequence:
+| Phase | Entries | Ops | Cycles (simulation = model) |
+|---|---|---|---|
+| embed | 0..1 | patch embedding as a 197x768 @ 768x192 matmul on the im2col input with a zero row 0, then one residual add of a constant 197x192 tensor (class token and position embedding) | 475,245 |
+| L0 | 2..27 | encoder layer 0, 26 ops | 1,844,272 |
+| L1 | 28..53 | encoder layer 1, 26 ops | 1,844,272 |
+| final | 54..56 | final LayerNorm on the class row, 1000-class head, 10-class head | 26,892 |
+| all | 57 of 256 | | 4,190,681 |
+
+A layer is, in this order: LN1; Q, K, V of each head (9 matmuls); S = Q @ K^T
+of each head; softmax of each head; O = P @ V of each head; output projection;
+residual add; LN2; fc1; GELU; fc2; residual add. Its 18 matmuls take 1,747,050
+cycles and its 8 row ops 97,222.
+
+### Buffer pool plan
+
+| Id | Name | Holds | Words per bank | BRAM36 as built | BRAM36 if packed by hand |
+|---|---|---|---|---|---|
+| 0 | X | residual stream 197x192; adds are in place | 4,800 | 16 | 16 |
+| 1 | W | weights of the running phase | 55,296 | 128 | 112 |
+| 2 | BIG | im2col input; attention output O; fc1 output, GELU in place | 19,200 | 64 | 40 |
+| 3 | N | LayerNorm output, then projection output, then fc2 output | 4,800 | 16 | 16 |
+| 4 | S | scores of the three heads, softmax in place; the addend; the logits | 14,775 | 32 | 32 |
+| 5 | QV | Q of the three heads (row banks) and V (column banks) | 9,528 | 32 | 24 |
+| 6 | K | K of the three heads, read as K^T | 4,800 | 16 | 16 |
+| 7 | | not used | 16 | 8 BRAM18 | 0 |
+
+Every buffer is used to its last word. Vivado rounds each bank up to a power
+of two, which is why the pool takes 304 BRAM36 where 256 would do. Keeping
+all three heads' Q, K, V and S at once (the order above) costs 19,200 words
+per bank more than computing one head at a time would.
+
+The bias store uses 315 of its 1,024 words per bank in a layer: 216 for the
+linear layers and 99 for the constant biases that round S and O.
+
+### What the host writes
+
+| Phase | Weight buffer | Bias store | LayerNorm constants | Other |
+|---|---|---|---|---|
+| embed | 18,432 | 24 | | im2col input 19,200 (BIG), addend 4,800 (S) |
+| L0, L1 | 55,296 | 315 | 384 (two LayerNorms) | |
+| final | 24,384 | 127 | 192 | |
+
+These are addresses; each write carries one byte per bank (one INT32 per bank
+for the bias store, one gain/offset pair for the LayerNorm constants). Inside
+a layer the weights are back to back: qkv at `weight_base` 0, proj at 13,824,
+fc1 at 18,432, fc2 at 36,864, with bias bases 0, 72, 96 and 192. The five
+LayerNorms keep their constants at 0, 192, 384, 576 and 768.
+
+Load sequence for a phase:
 
 1. Wait for `busy` low.
-2. Write the phase's weights into the weight buffer: for each column tile and
-   each k, one write of one byte per bank at `weight_base` + tile * K + k.
-3. Write the phase's biases into the bias store: one write of one INT32 per
-   bank for each column tile.
-4. Pulse `start` with the phase's `start_index` and wait for `done`.
+2. Write the images, one address per cycle.
+3. Wait one cycle, pulse `start` with the phase's first entry, wait for `done`.
 
-The descriptor tables of all phases fit in the descriptor memory together, so
-they are written once at start-up and only the weights and biases are
-reloaded.
+### What tb_encoder_program checks
+
+It writes everything through the host port only, as above. Each time the
+engine moves to the next descriptor it compares the finished op's whole
+output tensor with the golden tensor of that stage: 57 stages, in whichever
+buffer and layout they are. The host port cannot read while `busy` is high,
+so these comparisons read the pool memories directly. After each phase the
+phase's last output is also read back through the host port.
 
 ## Limits
 
@@ -358,6 +405,8 @@ reloaded.
 
 | Testbench | What it checks |
 |---|---|
+| `tb_encoder_program` | The whole forward pass as one descriptor program, loaded through the host port, every stage compared (see above) |
+| `tb_matmul_engine_nonlinear`, `tb_residual_add`, `tb_gelu_lut`, `tb_layernorm`, `tb_softmax` | The row ops, through the descriptor table and on their own |
 | `tb_matmul_engine_deit` | All 39 matmuls of the real pretrained DeiT-Tiny (patch embedding, layers 0 and 1, classifier), each on its real captured input, at 8x8 |
 | `tb_matmul_engine_chain` | A five-op attention-head table where each op reads what earlier ops wrote |
 | `tb_matmul_engine` | Single-op tables in both drain modes, with bases, padded strides and bias off |
@@ -367,24 +416,34 @@ Every comparison is bit-exact against `golden/vectors/`. The engine
 testbenches also check that no word outside the result is written.
 
 Out-of-context place-and-route on the XC7A200T-1 (`xc7a200tfbg484-1`) with a
-6.667 ns clock and the real buffer depths, from
-`scripts/ooc_matmul_engine.tcl`:
+6.667 ns clock, from `scripts/ooc_matmul_engine.tcl`:
 
-| | 8x8 | 16x16 |
-|---|---|---|
-| WNS | +0.165 ns | -0.017 ns (1 endpoint) |
-| Estimated Fmax | 153.8 MHz | 149.6 MHz |
-| DSP48E1 | 81 (64 PEs, 16 requantizers, 1 drain) | 289 (256 PEs, 32 requantizers, 1 drain) |
-| BRAM36 / BRAM18 | 248 / 29 | 256 / 53 |
-| LUT / FF | 5,250 / 5,295 | 12,390 / 12,675 |
+| | 8x8, `block-v1` | 8x8, `engine-v1.1` | 16x16, matmul only |
+|---|---|---|---|
+| Contents | matmul and the four row ops, pool plan above | matmul only, 5 buffers | matmul only |
+| WNS | +0.058 ns | +0.165 ns | -0.017 ns (1 endpoint) |
+| Estimated Fmax | 151.3 MHz | 153.8 MHz | 149.6 MHz |
+| DSP48E1 | 161 | 81 (64 PEs, 16 requantizers, 1 drain) | 289 |
+| BRAM36 / BRAM18 | 317 / 18 | 248 / 29 | 256 / 53 |
+| LUT / FF | 10,314 / 9,123 | 5,250 / 5,295 | 12,390 / 12,675 |
 
-Every PE maps to exactly one DSP48E1 at both sizes. The buffer depths are the
-same tensors at each size: one layer of weights, one 197x768 activation buffer
-and three 197x197 buffers. The 8x8 column is the build with the 256-entry
-descriptor memory, tagged `engine-v1.1`; commit `eeddbd6`, with 64 entries, had
-WNS +0.191 ns.
-The 16x16 column was built with 64 entries.
+Step by step, each at 8x8 with the five-buffer depths of `engine-v1.1`:
 
-The block RAM count is higher than the tensors need because Vivado rounds a
-deep bank up to a power of two. Hand-packing the 8x8 weight bank would take 14
-BRAM36 per bank instead of 16.
+| Tag | Adds | WNS | LUT | FF | DSP | BRAM36 / BRAM18 |
+|---|---|---|---|---|---|---|
+| `nl-add` | residual add, row op reader and writer | +0.117 ns | 6,780 | 6,290 | 97 | 248 / 29 |
+| `nl-gelu` | GELU | +0.084 ns | 6,849 | 6,405 | 97 | 248 / 33 |
+| `nl-layernorm` | LayerNorm | +0.119 ns | 9,531 | 7,925 | 153 | 249 / 34 |
+| `nl-softmax` | softmax | +0.107 ns | 10,200 | 8,921 | 161 | 253 / 34 |
+
+- **Block RAM is the tight resource.** The `block-v1` build uses 326 of the
+  365 block RAM tiles (89%): 304 BRAM36 for the pool, 8 for the bias store,
+  5 for the row ops' tables and constants, and the rest as BRAM18. Vivado
+  rounds each pool bank up to a power of two; packed by hand the pool would
+  need 256.
+- **Every PE maps to exactly one DSP48E1.** The 80 DSPs of the row ops are 16
+  in the add, 56 in LayerNorm and 8 in softmax.
+- **The worst paths** are the pool address routing and the drain's
+  requantizer, as before the row ops.
+- The 16x16 column is the scaling check of `engine-v1.1`, built with a
+  64-entry descriptor memory.

@@ -36,16 +36,29 @@ regexp {Option Name="Part" Val="([^"]+)"} [read $fh] -> part
 close $fh
 puts "ooc_matmul_engine: part $part, clock period $period ns, ${size}x${size} array"
 
-# Words per bank of pool buffers 0..7, for the same tensors at any array size:
-# one layer of weights (442,368 bytes spread over the banks), one 197x768
-# activation buffer, three 197x197 buffers. At 8x8 that is 55296, 19200 and
-# 4925. The package has 8 buffers; the three the real build does not need are
-# kept tiny.
+# Words per bank of pool buffers 0..7: the plan of golden/layer_program.py,
+# for the same tensors at any array size. With T = ceil(197 / size) row tiles
+# and C = ceil(64 / size) column tiles of one head:
+#   0 X    residual stream               T * 192
+#   1 W    one layer of weights          442,368 / size
+#   2 BIG  197 x 768                     T * 768
+#   3 N    197 x 192                     T * 192
+#   4 S    scores of three heads         3 * T * 197
+#   5 QV   Q and V of three heads        3 * T * 64 + 3 * C * 197
+#   6 K    K of three heads              3 * T * 64
+#   7      not used                      16
+# At 8x8: 4800 55296 19200 4800 14775 9528 4800 16.
 set token_tiles   [expr {(197 + $size - 1) / $size}]
-set weight_depth  [expr {(442368 + $size - 1) / $size}]
-set big_depth     [expr {$token_tiles * 768}]
-set small_depth   [expr {$token_tiles * 197}]
-set buffer_depths [list $weight_depth $big_depth $small_depth $small_depth $small_depth 16 16 16]
+set head_tiles    [expr {(64 + $size - 1) / $size}]
+set buffer_depths [list \
+    [expr {$token_tiles * 192}] \
+    [expr {(442368 + $size - 1) / $size}] \
+    [expr {$token_tiles * 768}] \
+    [expr {$token_tiles * 192}] \
+    [expr {3 * $token_tiles * 197}] \
+    [expr {3 * $token_tiles * 64 + 3 * $head_tiles * 197}] \
+    [expr {3 * $token_tiles * 64}] \
+    16]
 puts "ooc_matmul_engine: buffer depths $buffer_depths"
 set depth_generic ""
 foreach depth [lreverse $buffer_depths] {

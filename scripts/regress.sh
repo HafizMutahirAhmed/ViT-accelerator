@@ -29,6 +29,7 @@ runs=(
     "layernorm"
     "softmax"
     "matmul_engine_nonlinear"
+    "encoder_program"
 )
 
 snapshot_of() {

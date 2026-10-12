@@ -7,11 +7,13 @@ width 192, INT8 data and INT32 accumulation. Matrix products run on an
 output-stationary systolic array, and every module is checked bit for bit
 against a Python golden model.
 
-What exists so far is the matmul engine: the systolic array, operand buffers,
-drain, requantizer and an op sequencer. It is bit-exact in simulation on all 39
-matmul ops of the two layers, the patch embedding and the classifier. The
-non-linear ops, the DDR3 and host interfaces and the top level are not built
-yet.
+What exists so far is the compute engine: the systolic array, operand buffers,
+drain, requantizer, the residual add, GELU, LayerNorm and softmax, and an op
+sequencer that runs them from a descriptor table. The whole 2-layer forward
+pass (patch embedding, both encoder layers, final LayerNorm, classifier) runs
+as one 57-entry program and is bit-exact in simulation at every stage
+(`tb_encoder_program`). The DDR3 and host interfaces and the top level are not
+built yet.
 
 - [docs/SPEC.md](docs/SPEC.md): project spec
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
@@ -42,7 +44,7 @@ scripts/gen_vectors.sh
 scripts/regress.sh
 ```
 
-`regress.sh` runs 14 testbench configurations, 4 at a time, and prints one PASS
+`regress.sh` runs 20 testbench configurations, 4 at a time, and prints one PASS
 or FAIL line for each. It exits non-zero if any run fails. Pass a number to
 change how many run in parallel, for example `scripts/regress.sh 2`. Logs are
 in `sim/<snapshot>.log`.

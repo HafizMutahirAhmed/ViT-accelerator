@@ -1,6 +1,9 @@
 """Cycle model of matmul_engine, checked against a tb_matmul_engine_deit log.
 
 Usage: python3 golden/cycle_model.py [sim/sim_matmul_engine_deit.log]
+       python3 golden/cycle_model.py --program [sim/sim_encoder_program.log]
+       --program models the whole descriptor program of golden/layer_program.py,
+       entry by entry, and checks it against a tb_encoder_program log.
 
 For one op on an S_ROW x S_COL array:
   cycles   = tiles * (K + S_ROW + S_COL - 2 + DSP_LATENCY) + overhead
@@ -100,7 +103,60 @@ def load_ops():
     return ops
 
 
+ROW_KINDS = {1: "add", 2: "gelu", 3: "layernorm", 4: "softmax"}
+
+
+def program_main(log_name):
+    """The descriptor program, entry by entry, against a tb_encoder_program log."""
+    forward_dir = os.path.join(os.path.dirname(VEC_DIR), "deit_forward")
+    with open(os.path.join(forward_dir, "program_desc.hex")) as f:
+        words = [int(line, 16) for line in f]
+    count = PARAMS["DESCRIPTOR_WORDS"]
+    descriptors = [unpack_descriptor(words[i:i + count]) for i in range(0, len(words), count)]
+    with open(os.path.join(forward_dir, "program_ops.txt")) as f:
+        names = [(line.split()[1], line.split()[2]) for line in f]
+    simulated = {}
+    if log_name:
+        with open(log_name) as log:
+            for line in log:
+                m = re.match(r"\s*(\d+)\s+\S+\s+\S+\s+PASS\s.*\scycles (\d+)", line)
+                if m:
+                    simulated[int(m.group(1))] = int(m.group(2))
+    sys_row, sys_col = PARAMS["SYS_ROW"], PARAMS["SYS_COL"]
+    phases, mismatches = {}, 0
+    for entry, (d, (phase, name)) in enumerate(zip(descriptors, names)):
+        if d["opcode"] == PARAMS["OPCODE_MATMUL"]:
+            cycles = op_cycles(d["rows_total"], d["inner_dim"], d["cols_total"],
+                               d["drain_mode"] == PARAMS["DRAIN_COLUMN_SELECT"], sys_row, sys_col)[0]
+            kind = "matmul"
+        else:
+            kind = ROW_KINDS[d["opcode"]]
+            cycles = nonlinear_cycles(kind, d["rows_total"], d["cols_total"], sys_row)
+        total = phases.setdefault(phase, {"model": 0, "sim": 0, "matmul": 0, "row": 0, "ops": 0})
+        total["model"] += cycles
+        total["matmul" if kind == "matmul" else "row"] += cycles
+        total["ops"] += 1
+        sim = simulated.get(entry)
+        if sim is not None:
+            total["sim"] += sim
+            if sim != cycles:
+                mismatches += 1
+                print(f"MISMATCH entry {entry} {name}: model {cycles}, simulation {sim}")
+    print(f"{'phase':6s} {'ops':>4s} {'matmul':>9s} {'row ops':>8s} {'model':>9s} {'sim':>9s}")
+    for phase, total in phases.items():
+        print(f"{phase:6s} {total['ops']:4d} {total['matmul']:9d} {total['row']:8d} {total['model']:9d} "
+              f"{total['sim'] if simulated else '':>9}")
+    print(f"{'all':6s} {len(descriptors):4d} {'':9s} {'':8s} {sum(t['model'] for t in phases.values()):9d} "
+          f"{sum(t['sim'] for t in phases.values()) if simulated else '':>9}")
+    if simulated:
+        print(f"model matches the simulation for {len(simulated) - mismatches} of {len(simulated)} program entries "
+              f"({len(descriptors)} in the program)")
+    return 1 if mismatches or (simulated and len(simulated) != len(descriptors)) else 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--program":
+        return program_main(sys.argv[2] if len(sys.argv) > 2 else None)
     ops = load_ops()
     simulated = {}
     if len(sys.argv) > 1:

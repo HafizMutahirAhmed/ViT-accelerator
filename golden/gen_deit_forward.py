@@ -53,6 +53,7 @@ from int8_ops import ACC_MAX, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH, add_bia
 from nonlinear_ops import (LayerNormConfig, SoftmaxConfig, add_constants, exp_table, gelu, gelu_real,
                            gelu_table, layernorm, layernorm_constants, pick_multiplier, residual_add,
                            rsqrt_table, softmax)
+import layer_program
 from pkg_config import PARAMS, pack_descriptor
 
 GOLDEN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -597,6 +598,11 @@ def dump(parameters, fp, test_name):
                 extra = op.get("files", ("-", "-"))
                 manifest.write(f"{name} {op['kind']} {a_file} {b_file} {stage_of[id(op['y'])]}.hex "
                                f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex {extra[0]} {extra[1]}\n")
+    # the whole pass as one descriptor program
+    stage_file = {tensor_id: name + ".hex" for tensor_id, name in stage_of.items()}
+    program = layer_program.build(forward, stage_file, FORWARD_DIR)
+    print("\n" + layer_program.summary(program))
+
     print(f"\nwrote {len(os.listdir(MATMUL_DIR))} files to {os.path.relpath(MATMUL_DIR, GOLDEN_DIR)} "
           f"({len(forward.matmuls)} engine ops) and {len(os.listdir(FORWARD_DIR))} files to "
           f"{os.path.relpath(FORWARD_DIR, GOLDEN_DIR)}, test image {test_name}")
