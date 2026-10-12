@@ -14,6 +14,17 @@ For one op on an S_ROW x S_COL array:
            + POOL_WRITE_LATENCY        pool write register
 The latencies come from rtl/vit_config_pkg.sv. The ops are the real DeiT-Tiny
 ops listed in golden/vectors/deit/deit_ops.txt.
+
+The non-linear ops (residual add, GELU, LayerNorm, softmax) are not built. Their
+cycle counts here are the plan: one row unit per bank of the row-bank layout,
+so SYS_ROW rows are processed together and each pass over a row tile takes one
+cycle per row element. The pipeline depths in PLAN are estimates until there
+is RTL to measure.
+  add, gelu   cycles = 4 + tiles * N + tail                    one pass
+  layernorm   cycles = 4 + tiles * (2 * N + gap) + tail        statistics pass, output pass
+  softmax     cycles = 4 + tiles * (3 * N + gap) + tail        max pass, sum pass, output pass
+  tiles = ceil(rows / SYS_ROW), N = row length
+  tail  = BUFFER_READ_LATENCY + the op's output pipeline + POOL_WRITE_LATENCY
 """
 
 import os
@@ -33,6 +44,53 @@ def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
     overhead = (4 + PARAMS["BUFFER_READ_LATENCY"] + 2 + steps + 2 + PARAMS["REQUANTIZE_LATENCY"]
                 + PARAMS["POOL_WRITE_LATENCY"])
     return tiles * (inner + flush) + overhead, tiles, tiles * flush, rows * inner * cols / (sys_row * sys_col)
+
+
+# planned pipeline depths of the non-linear units, in cycles
+PLAN = {
+    "add_pipeline": 3,          # multiply, add, round/shift/clip
+    "gelu_pipeline": 2,         # table read, table output register
+    "layernorm_statistics": 7,  # square and accumulate 2, variance 3, reciprocal square root table 2
+    "layernorm_pipeline": 7,    # centre 1, times reciprocal 2, shift 1, times gain 2, offset/shift/clip 1
+    "softmax_max": 1,           # compare after the last score
+    "softmax_sum": 4,           # distance 1, exp table 2, accumulate 1
+    "softmax_divide": 20,       # one quotient bit per cycle
+    "softmax_pipeline": 6,      # distance 1, exp table 2, multiply 2, round/shift/clip 1
+}
+
+
+def nonlinear_cycles(kind, rows, length, lanes):
+    """Planned cycles of one non-linear op on rows x length, `lanes` rows at a time."""
+    tiles = -(-rows // lanes)
+    read, write = PARAMS["BUFFER_READ_LATENCY"], PARAMS["POOL_WRITE_LATENCY"]
+    if kind in ("add", "gelu"):
+        per_tile, pipeline = length, PLAN[kind + "_pipeline"]
+    elif kind == "layernorm":
+        per_tile = 2 * length + read + PLAN["layernorm_statistics"]
+        pipeline = PLAN["layernorm_pipeline"]
+    elif kind == "softmax":
+        per_tile = (3 * length + read + PLAN["softmax_max"] + read + PLAN["softmax_sum"]
+                    + PLAN["softmax_divide"])
+        pipeline = PLAN["softmax_pipeline"]
+    else:
+        raise ValueError(kind)
+    return 4 + tiles * per_tile + read + pipeline + write
+
+
+# the non-linear ops of one encoder layer: (name, kind, count, rows, row length)
+LAYER_NONLINEAR = [
+    ("LayerNorm 1", "layernorm", 1, 197, 192),
+    ("softmax, per head", "softmax", 3, 197, 197),
+    ("residual add 1", "add", 1, 197, 192),
+    ("LayerNorm 2", "layernorm", 1, 197, 192),
+    ("GELU", "gelu", 1, 197, 768),
+    ("residual add 2", "add", 1, 197, 192),
+]
+# once per image, outside the layers
+ONCE_NONLINEAR = [
+    ("position add", "add", 1, 197, 192),
+    ("final LayerNorm, class row", "layernorm", 1, 1, 192),
+]
 
 
 def load_ops():
@@ -83,6 +141,24 @@ def main():
                 total, flush_total, ideal_total = total + cycles, flush_total + flush, ideal_total + ideal
         print(f"{f'{size}x{size}':>6s} {total:9d} {ideal_total:9.0f} {100 * ideal_total / total:10.1f}% "
               f"{flush_total:8d} {100 * flush_total / total:10.1f}%")
+
+    print(f"\nnon-linear ops, planned (not built), {sys_row} rows at a time:")
+    print(f"{'op':28s} {'shape':>9s} {'count':>5s} {'cycles each':>11s} {'total':>8s}")
+    matmul_layer = sum(op_cycles(rows, inner, cols, column_select, sys_row, sys_col)[0]
+                       for _name, group, rows, inner, cols, column_select in ops if group == "L0")
+    layer_total = 0
+    for name, kind, count, rows, length in LAYER_NONLINEAR:
+        cycles = nonlinear_cycles(kind, rows, length, sys_row)
+        layer_total += count * cycles
+        print(f"{name:28s} {f'{rows}x{length}':>9s} {count:5d} {cycles:11d} {count * cycles:8d}")
+    print(f"{'one encoder layer':28s} {'':>9s} {'':>5s} {'':>11s} {layer_total:8d}")
+    print(f"matmul cycles of one layer: {matmul_layer}; the non-linear ops add "
+          f"{100 * layer_total / matmul_layer:.2f}% ({matmul_layer + layer_total} per layer in total)")
+    for name, kind, count, rows, length in ONCE_NONLINEAR:
+        print(f"{name:28s} {f'{rows}x{length}':>9s} {count:5d} {nonlinear_cycles(kind, rows, length, sys_row):11d}")
+    serial = sum(count * nonlinear_cycles(kind, rows, length, 1) for _n, kind, count, rows, length in LAYER_NONLINEAR)
+    print(f"with one row unit instead of {sys_row}: {serial} cycles per layer, "
+          f"{100 * serial / matmul_layer:.1f}% of the matmul cycles")
     return 1 if mismatches else 0
 
 

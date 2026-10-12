@@ -74,3 +74,11 @@ python3 -m venv --system-site-packages .venv
 
 The first run downloads the DeiT-Tiny weights. The images it uses are in
 `golden/images/`.
+
+The chained 2-layer forward pass with the non-linear ops (residual add, GELU,
+LayerNorm, softmax; integer models in `golden/nonlinear_ops.py`) is a separate
+script. It prints the accuracy report and writes `golden/vectors/deit_forward/`:
+
+```sh
+.venv/bin/python golden/gen_deit_forward.py
+```
