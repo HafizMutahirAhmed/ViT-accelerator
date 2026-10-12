@@ -26,6 +26,7 @@ runs=(
     "requantize"
     "residual_add"
     "gelu_lut"
+    "layernorm"
     "matmul_engine_nonlinear"
 )
 

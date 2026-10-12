@@ -81,8 +81,12 @@ package vit_config_pkg;
     //               banks; scale = multiplier of the first, bias_base[7:0] =
     //               multiplier of the second, shift = their common shift
     //   OPCODE_GELU one operand (activation); bias_base = which table
-    parameter  OPCODE_ADD    = 4'd1;
-    parameter  OPCODE_GELU   = 4'd2;
+    //   OPCODE_LAYERNORM  one operand; bias_base = address of the row's first
+    //               gain/offset pair in the constants memory, shift = output
+    //               shift, inner_dim = epsilon in variance units
+    parameter  OPCODE_ADD       = 4'd1;
+    parameter  OPCODE_GELU      = 4'd2;
+    parameter  OPCODE_LAYERNORM = 4'd3;
 
     // row ops: passes over a row tile are counted in this many bits
     parameter  ROW_OP_PASS_WIDTH = 2;
@@ -99,6 +103,20 @@ package vit_config_pkg;
     // register, ROM read, output register
     parameter  GELU_TABLE_COUNT = 2;
     parameter  GELU_LATENCY     = 3;
+
+    // layernorm: gain (signed) and offset (signed) per column, for every
+    // LayerNorm of the model, in one host-written memory
+    parameter  LAYERNORM_GAIN_WIDTH     = 16;
+    parameter  LAYERNORM_OFFSET_WIDTH   = 32;
+    parameter  LAYERNORM_CONSTANT_DEPTH = 1024;
+    // reciprocal square root table: 2**INDEX_BITS entries of RSQRT_BITS + 1
+    // bits; the normalised value has NORM_FRAC fraction bits
+    parameter  LAYERNORM_RSQRT_INDEX_BITS = 8;
+    parameter  LAYERNORM_RSQRT_BITS       = 12;
+    parameter  LAYERNORM_NORM_FRAC        = 8;
+    // cycles from a pass 1 input of layernorm to its output: operand, n * x,
+    // centre, times reciprocal, shift, times gain, plus offset, shift, clip
+    parameter  LAYERNORM_LATENCY = 9;
 
     // One op of the engine. The first field is the most significant. In the
     // descriptor memory the struct sits in the low DESCRIPTOR_WIDTH bits of a

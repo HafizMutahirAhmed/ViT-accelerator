@@ -25,7 +25,11 @@ is RTL to measure.
                        pool write register and two cycles to end the op. Measured in
                        tb_matmul_engine_nonlinear: 4,820 for 197 x 192.
   gelu        the same with GELU_LATENCY; measured 19,218 for 197 x 768.
-  layernorm   cycles = 4 + tiles * (2 * N + gap) + tail        statistics pass, output pass
+  layernorm   cycles = 4 + tiles * (2 * N + ROW_OP_READ_LATENCY + 12)
+                       + ROW_OP_READ_LATENCY + LAYERNORM_LATENCY + 5
+                       built; statistics pass, 12 cycles from its last data to the
+                       reciprocal, output pass. Measured 10,074 for 197 x 192 and 426
+                       for the class row.
   softmax     cycles = 4 + tiles * (3 * N + gap) + tail        max pass, sum pass, output pass
   tiles = ceil(rows / SYS_ROW), N = row length
   tail  = BUFFER_READ_LATENCY + the op's output pipeline + POOL_WRITE_LATENCY
@@ -52,8 +56,6 @@ def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
 
 # planned pipeline depths of the non-linear units, in cycles
 PLAN = {
-    "layernorm_statistics": 7,  # square and accumulate 2, variance 3, reciprocal square root table 2
-    "layernorm_pipeline": 7,    # centre 1, times reciprocal 2, shift 1, times gain 2, offset/shift/clip 1
     "softmax_max": 1,           # compare after the last score
     "softmax_sum": 4,           # distance 1, exp table 2, accumulate 1
     "softmax_divide": 20,       # one quotient bit per cycle
@@ -71,8 +73,8 @@ def nonlinear_cycles(kind, rows, length, lanes):
     if False:
         pass
     elif kind == "layernorm":
-        per_tile = 2 * length + read + PLAN["layernorm_statistics"]
-        pipeline = PLAN["layernorm_pipeline"]
+        return (4 + tiles * (2 * length + PARAMS["ROW_OP_READ_LATENCY"] + 12)
+                + PARAMS["ROW_OP_READ_LATENCY"] + PARAMS["LAYERNORM_LATENCY"] + 2 + write + 2)
     elif kind == "softmax":
         per_tile = (3 * length + read + PLAN["softmax_max"] + read + PLAN["softmax_sum"]
                     + PLAN["softmax_divide"])

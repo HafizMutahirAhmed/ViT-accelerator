@@ -17,7 +17,7 @@
 // simply by naming its id: nothing is copied. The three ids of an op must
 // differ, because a buffer has one read port and one write port.
 //
-// Row ops (OPCODE_ADD, OPCODE_GELU; see vit_config_pkg) work on tensors in row banks, SYS_ROW
+// Row ops (OPCODE_ADD, OPCODE_GELU, OPCODE_LAYERNORM; see vit_config_pkg) work on tensors in row banks, SYS_ROW
 // rows at a time. row_op_reader issues the read addresses, the op's datapath
 // processes the read data and row_op_writer writes the result. A row op may
 // write to the buffer it reads (in place): a word is written only after it
@@ -42,7 +42,8 @@
 //
 // Host port. While busy is low the host can write and read the pool
 // (host_buffer_id, host_address, one write enable per bank), the bias store
-// (host_address, one write enable per column bank) and the descriptor memory
+// (host_address, one write enable per column bank), the LayerNorm constants
+// (host_address, gain and offset of one column per write) and the descriptor memory
 // (host_descriptor_index, one write enable per 32-bit word, word 0 least
 // significant). Every host write is registered once after the busy gate, so
 // it lands one cycle (vit_config_pkg::POOL_WRITE_LATENCY for the pool) after
@@ -87,13 +88,19 @@ module matmul_engine #(
 
     input  logic [SYS_COL-1:0]                     host_bias_write_enable,
     input  logic [SYS_COL-1:0][ACC_WIDTH-1:0]      host_bias_write_data,
-    output logic [SYS_COL-1:0][ACC_WIDTH-1:0]      host_bias_read_data
+    output logic [SYS_COL-1:0][ACC_WIDTH-1:0]      host_bias_read_data,
+
+    // LayerNorm gain and offset of one column, written at host_address
+    input  logic                                                      host_layernorm_write_enable = 1'b0,
+    input  logic signed [vit_config_pkg::LAYERNORM_GAIN_WIDTH-1:0]    host_layernorm_write_gain   = '0,
+    input  logic signed [vit_config_pkg::LAYERNORM_OFFSET_WIDTH-1:0]  host_layernorm_write_offset = '0
 );
 
     import vit_config_pkg::descriptor_t;
     import vit_config_pkg::OPCODE_MATMUL;
     import vit_config_pkg::OPCODE_ADD;
     import vit_config_pkg::OPCODE_GELU;
+    import vit_config_pkg::OPCODE_LAYERNORM;
 
     localparam int BUFFER_COUNT            = vit_config_pkg::BUFFER_COUNT;
     localparam int BANK_DEPTH_MAX          = vit_config_pkg::BANK_DEPTH_MAX;
@@ -175,7 +182,8 @@ module matmul_engine #(
 
     assign busy             = state != STATE_IDLE;
     assign controller_start = state == STATE_LAUNCH && descriptor.opcode == OPCODE_MATMUL;
-    assign is_row_op        = descriptor.opcode == OPCODE_ADD || descriptor.opcode == OPCODE_GELU;
+    assign is_row_op        = descriptor.opcode == OPCODE_ADD || descriptor.opcode == OPCODE_GELU
+                              || descriptor.opcode == OPCODE_LAYERNORM;
     assign row_op_start     = state == STATE_LAUNCH && is_row_op;
 
     always_ff @(posedge CLK) begin
@@ -327,6 +335,12 @@ module matmul_engine #(
     logic [ADDRESS_WIDTH-1:0]                  row_write_address;
     logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] row_write_data;
 
+    // passes over a row tile, minus 1; only a multi-pass op waits for pass_ready
+    logic [ROW_OP_PASS_WIDTH-1:0] row_op_passes;
+    logic                         layernorm_pass_ready;
+
+    assign row_op_passes = (descriptor.opcode == OPCODE_LAYERNORM) ? ROW_OP_PASS_WIDTH'(1) : '0;
+
     row_op_reader #(
         .LANES        (SYS_ROW),
         .BANK_DEPTH   (BANK_DEPTH_MAX),
@@ -338,10 +352,10 @@ module matmul_engine #(
         .rows_total      (descriptor.rows_total),
         .row_length      (descriptor.cols_total),
         .row_tiles       (descriptor.row_tiles),
-        .passes          ('0),
+        .passes          (row_op_passes),
         .base_a          (descriptor.activation_base),
         .base_b          (descriptor.weight_base),
-        .pass_ready      (1'b1),
+        .pass_ready      (layernorm_pass_ready),
         .read_address_a  (row_read_address_a),
         .read_address_b  (row_read_address_b),
         .data_valid      (row_data_valid),
@@ -389,15 +403,66 @@ module matmul_engine #(
         .y_out        (gelu_result)
     );
 
+    localparam int LAYERNORM_ADDRESS_WIDTH = $clog2(vit_config_pkg::LAYERNORM_CONSTANT_DEPTH);
+
+    // host write of the LayerNorm constants, registered after the busy gate
+    logic                                                     layernorm_write_enable_reg;
+    logic [LAYERNORM_ADDRESS_WIDTH-1:0]                       layernorm_write_address_reg;
+    logic signed [vit_config_pkg::LAYERNORM_GAIN_WIDTH-1:0]   layernorm_write_gain_reg;
+    logic signed [vit_config_pkg::LAYERNORM_OFFSET_WIDTH-1:0] layernorm_write_offset_reg;
+
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            layernorm_write_enable_reg <= 1'b0;
+        end
+        else begin
+            layernorm_write_enable_reg <= busy ? 1'b0 : host_layernorm_write_enable;
+        end
+        layernorm_write_address_reg <= host_address[LAYERNORM_ADDRESS_WIDTH-1:0];
+        layernorm_write_gain_reg    <= host_layernorm_write_gain;
+        layernorm_write_offset_reg  <= host_layernorm_write_offset;
+    end
+
+    logic                                      layernorm_valid;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] layernorm_result;
+
+    layernorm #(
+        .LANES      (SYS_ROW),
+        .DATA_WIDTH (DATA_WIDTH)
+    ) layernorm_inst (
+        .CLK                     (CLK),
+        .reset                   (reset),
+        .constants_write_enable  (layernorm_write_enable_reg),
+        .constants_write_address (layernorm_write_address_reg),
+        .constants_write_gain    (layernorm_write_gain_reg),
+        .constants_write_offset  (layernorm_write_offset_reg),
+        .row_length              (descriptor.cols_total),
+        .constants_base          (descriptor.bias_base[LAYERNORM_ADDRESS_WIDTH-1:0]),
+        .out_shift               (descriptor.shift),
+        .epsilon                 (descriptor.inner_dim),
+        .valid_in                (row_data_valid && descriptor.opcode == OPCODE_LAYERNORM),
+        .pass_in                 (row_data_pass[0]),
+        .first_in                (row_data_first),
+        .last_in                 (row_data_last),
+        .x_in                    (row_data_a),
+        .pass_ready              (layernorm_pass_ready),
+        .valid_out               (layernorm_valid),
+        .y_out                   (layernorm_result)
+    );
+
     // result register: the datapath of the running row op
     always_ff @(posedge CLK) begin
         if (reset) begin
             row_result_valid <= 1'b0;
         end
         else begin
-            row_result_valid <= add_valid || gelu_valid;
+            row_result_valid <= add_valid || gelu_valid || layernorm_valid;
         end
-        row_result_data <= (descriptor.opcode == OPCODE_GELU) ? gelu_result : add_sum;
+        case (descriptor.opcode)
+            OPCODE_GELU:      row_result_data <= gelu_result;
+            OPCODE_LAYERNORM: row_result_data <= layernorm_result;
+            default:          row_result_data <= add_sum;
+        endcase
     end
 
     row_op_writer #(

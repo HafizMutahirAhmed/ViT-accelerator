@@ -1,19 +1,21 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 // Self-checking testbench for the row ops of matmul_engine (the non-linear
-// ops: residual add, GELU), run through the descriptor table like a matmul.
+// ops: residual add, GELU, LayerNorm), run through the descriptor table like a matmul.
 //
 // For every op in the manifest whose kind this testbench knows, it writes the
 // one-op descriptor table, fills the output region with a known pattern,
 // loads the operands into the row banks of their pool buffers through the
 // host port, runs the engine, reads the whole output region back and compares
 // it with the golden INT8 tensor. Words outside the result must still hold
-// the pattern, or, where an operand was loaded there, the operand.
+// the pattern, or, where an operand was loaded there, the operand. For a
+// LayerNorm it first writes the gain and offset of every column.
 //
 // Vectors come from golden/gen_deit_forward.py, in golden/vectors/deit_forward:
 //   nonlinear_ops.txt  one line per op: name, kind, a file, b file or "-",
 //                      y file, descriptor file, two more files or "-"
 //   a, b, y            INT8 rows x cols, row-major
+//   gain, offset       LayerNorm only: INT16 and INT32 per column
 // Tensor element [row][col] is in row bank row % SYS_ROW at
 // base + (row / SYS_ROW) * cols + col (the output uses output_stride).
 // The array size must be the one the descriptors were made for (8x8).
@@ -28,6 +30,7 @@ module tb_matmul_engine_nonlinear #(
     import vit_config_pkg::descriptor_t;
     import vit_config_pkg::OPCODE_ADD;
     import vit_config_pkg::OPCODE_GELU;
+    import vit_config_pkg::OPCODE_LAYERNORM;
 
     localparam int DATA_WIDTH              = vit_config_pkg::DATA_WIDTH;
     localparam int ACC_WIDTH               = vit_config_pkg::ACC_WIDTH;
@@ -63,6 +66,9 @@ module tb_matmul_engine_nonlinear #(
     logic [SYS_COL-1:0]                host_bias_write_enable;
     logic [SYS_COL-1:0][ACC_WIDTH-1:0] host_bias_write_data;
     logic [SYS_COL-1:0][ACC_WIDTH-1:0] host_bias_read_data;
+    logic                                                     host_layernorm_write_enable = 1'b0;
+    logic signed [vit_config_pkg::LAYERNORM_GAIN_WIDTH-1:0]   host_layernorm_write_gain   = '0;
+    logic signed [vit_config_pkg::LAYERNORM_OFFSET_WIDTH-1:0] host_layernorm_write_offset = '0;
 
     matmul_engine #(
         .SYS_ROW      (SYS_ROW),
@@ -85,7 +91,10 @@ module tb_matmul_engine_nonlinear #(
         .host_buffer_read_data        (host_buffer_read_data),
         .host_bias_write_enable       (host_bias_write_enable),
         .host_bias_write_data         (host_bias_write_data),
-        .host_bias_read_data          (host_bias_read_data)
+        .host_bias_read_data          (host_bias_read_data),
+        .host_layernorm_write_enable  (host_layernorm_write_enable),
+        .host_layernorm_write_gain    (host_layernorm_write_gain),
+        .host_layernorm_write_offset  (host_layernorm_write_offset)
     );
 
     always #5 CLK = ~CLK;
@@ -94,6 +103,8 @@ module tb_matmul_engine_nonlinear #(
     logic [DATA_WIDTH-1:0] b_mem[VECTOR_WORDS_MAX];
     logic [DATA_WIDTH-1:0] expected_mem[VECTOR_WORDS_MAX];
     logic [31:0]           descriptor_mem[DESCRIPTOR_WORDS];
+    logic [vit_config_pkg::LAYERNORM_GAIN_WIDTH-1:0]   gain_mem[1024];
+    logic [vit_config_pkg::LAYERNORM_OFFSET_WIDTH-1:0] offset_mem[1024];
 
     int busy_cycles;
     int ops_passed    = 0;
@@ -143,7 +154,8 @@ module tb_matmul_engine_nonlinear #(
     endtask
 
     task automatic run_op(input string op_name, input string kind, input string a_file, input string b_file,
-                          input string y_file, input string descriptor_file);
+                          input string y_file, input string descriptor_file,
+                          input string gain_file, input string offset_file);
         descriptor_t                        descriptor;
         logic [DESCRIPTOR_MEMORY_WIDTH-1:0] descriptor_word;
         int rows, cols, row_tiles, stride, output_base, region_end;
@@ -175,7 +187,8 @@ module tb_matmul_engine_nonlinear #(
 
         if (!descriptor.last_op || row_tiles != (rows + SYS_ROW - 1) / SYS_ROW
             || (kind == "add" && descriptor.opcode != OPCODE_ADD)
-            || (kind == "gelu" && descriptor.opcode != OPCODE_GELU)) begin
+            || (kind == "gelu" && descriptor.opcode != OPCODE_GELU)
+            || (kind == "layernorm" && descriptor.opcode != OPCODE_LAYERNORM)) begin
             $fatal(1, "FAIL: descriptor table %s does not fit this testbench", descriptor_file);
         end
         if (rows*cols > VECTOR_WORDS_MAX || output_base + row_tiles*stride > BUFFER_DEPTH) begin
@@ -218,6 +231,19 @@ module tb_matmul_engine_nonlinear #(
         load_tensor(a_buffer, a_base, rows, cols, 1'b0);
         if (two_operands) begin
             load_tensor(b_buffer, b_base, rows, cols, 1'b1);
+        end
+        // LayerNorm: gain and offset of column c at bias_base + c
+        if (kind == "layernorm") begin
+            $readmemh(vector_file(gain_file), gain_mem, 0, cols - 1);
+            $readmemh(vector_file(offset_file), offset_mem, 0, cols - 1);
+            for (int column = 0; column < cols; column++) begin
+                host_address                = ADDRESS_WIDTH'(int'(descriptor.bias_base) + column);
+                host_layernorm_write_enable = 1'b1;
+                host_layernorm_write_gain   = gain_mem[column];
+                host_layernorm_write_offset = offset_mem[column];
+                @(negedge CLK);
+            end
+            host_layernorm_write_enable = 1'b0;
         end
         @(negedge CLK);
 
@@ -320,8 +346,8 @@ module tb_matmul_engine_nonlinear #(
         while (!$feof(manifest)) begin
             fields = $fscanf(manifest, "%s %s %s %s %s %s %s %s\n",
                              op_name, kind, a_file, b_file, y_file, descriptor_file, extra_1, extra_2);
-            if (fields == 8 && (kind == "add" || kind == "gelu")) begin
-                run_op(op_name, kind, a_file, b_file, y_file, descriptor_file);
+            if (fields == 8 && (kind == "add" || kind == "gelu" || kind == "layernorm")) begin
+                run_op(op_name, kind, a_file, b_file, y_file, descriptor_file, extra_1, extra_2);
             end
         end
         $fclose(manifest);

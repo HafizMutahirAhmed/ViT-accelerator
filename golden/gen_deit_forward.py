@@ -568,6 +568,7 @@ def dump(parameters, fp, test_name):
     write_hex(os.path.join(ROM_DIR, "gelu_rom.hex"),
               np.concatenate([forward.constants[op["name"]]["table"] for op in forward.row_ops
                               if op["kind"] == "gelu"]), DATA_WIDTH)
+    write_hex(os.path.join(ROM_DIR, "rsqrt_rom.hex"), rsqrt_table(LAYERNORM), LAYERNORM.rsqrt_bits + 1)
 
     # the non-linear ops as engine ops. nonlinear_ops.txt has one line per op: name, kind, a file, b file or
     # "-", y file, descriptor file, and for layernorm the gain and offset files. Every op is there twice:
