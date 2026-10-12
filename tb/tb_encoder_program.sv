@@ -23,11 +23,27 @@
 // Vectors come from golden/gen_deit_forward.py (golden/layer_program.py), in
 // golden/vectors/deit_forward: program_desc.hex, program_phases.txt,
 // program_ops.txt, program_loads.txt, the *_image.hex files and one golden
-// tensor per stage. The pool buffers have exactly the planned depths. 8x8 only.
+// tensor per stage. The pool buffers have exactly the planned depths, which
+// are parameters here together with the vector directory and the ROM images,
+// so a wrapper can run another model configuration (tb_encoder_program_mnist112).
+// 8x8 only.
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_encoder_program #(
-    parameter string VECTOR_DIR = "../golden/vectors/deit_forward/"
+    parameter string VECTOR_DIR     = "../golden/vectors/deit_forward/",
+    // words per bank of pool buffers 0 .. 7: the plan in golden/layer_program.py,
+    // which the generator also writes to program_plan.txt
+    parameter int    DEPTH_X        = 4800,
+    parameter int    DEPTH_W        = 55296,
+    parameter int    DEPTH_BIG      = 19200,
+    parameter int    DEPTH_N        = 4800,
+    parameter int    DEPTH_S        = 14775,
+    parameter int    DEPTH_QV       = 9528,
+    parameter int    DEPTH_K        = 4800,
+    parameter int    DEPTH_UNUSED   = 16,
+    parameter string GELU_ROM_FILE  = "rom/gelu_rom.hex",
+    parameter string EXP_ROM_FILE   = "rom/exp_rom.hex",
+    parameter string RSQRT_ROM_FILE = "rom/rsqrt_rom.hex"
 );
 
     localparam int SYS_ROW                = 8;
@@ -44,13 +60,13 @@ module tb_encoder_program #(
     localparam int GAIN_WIDTH             = vit_config_pkg::LAYERNORM_GAIN_WIDTH;
     localparam int OFFSET_WIDTH           = vit_config_pkg::LAYERNORM_OFFSET_WIDTH;
 
-    // words per bank of buffers 7 .. 0: the plan in golden/layer_program.py
     localparam bit [BUFFER_COUNT-1:0][31:0] BUFFER_DEPTH
-        = {32'd16, 32'd4800, 32'd9528, 32'd14775, 32'd4800, 32'd19200, 32'd55296, 32'd4800};
+        = {32'(DEPTH_UNUSED), 32'(DEPTH_K), 32'(DEPTH_QV), 32'(DEPTH_S), 32'(DEPTH_N), 32'(DEPTH_BIG),
+           32'(DEPTH_W), 32'(DEPTH_X)};
 
     localparam int IMAGE_WORDS_MAX  = 65536;
     localparam int VECTOR_WORDS_MAX = 262144;
-    localparam int PHASES_MAX       = 8;
+    localparam int PHASES_MAX       = 64;
     localparam int TIMEOUT_CYCLES   = 4000000;
 
     logic                              CLK = 1'b0;
@@ -75,9 +91,12 @@ module tb_encoder_program #(
     logic signed [OFFSET_WIDTH-1:0]    host_layernorm_write_offset;
 
     matmul_engine #(
-        .SYS_ROW      (SYS_ROW),
-        .SYS_COL      (SYS_COL),
-        .BUFFER_DEPTH (BUFFER_DEPTH)
+        .SYS_ROW        (SYS_ROW),
+        .SYS_COL        (SYS_COL),
+        .BUFFER_DEPTH   (BUFFER_DEPTH),
+        .GELU_ROM_FILE  (GELU_ROM_FILE),
+        .EXP_ROM_FILE   (EXP_ROM_FILE),
+        .RSQRT_ROM_FILE (RSQRT_ROM_FILE)
     ) dut (
         .CLK                          (CLK),
         .reset                        (reset),
@@ -376,6 +395,8 @@ module tb_encoder_program #(
         int file;
         int fields;
         int entry;
+        int tokens;
+        int plan_depth[BUFFER_COUNT];
         string layout;
 
         $display("tb_encoder_program: 8x8 array, buffer depths per bank %0d %0d %0d %0d %0d %0d %0d %0d",
@@ -398,6 +419,19 @@ module tb_encoder_program #(
         host_layernorm_write_offset  = '0;
         repeat (3) @(negedge CLK);
         reset = 1'b0;
+
+        // the pool must be the one the program was laid out for
+        file = $fopen(vector_file("program_plan.txt"), "r");
+        fields = $fscanf(file, "%d %d %d %d %d %d %d %d %d", tokens, plan_depth[0], plan_depth[1], plan_depth[2],
+                         plan_depth[3], plan_depth[4], plan_depth[5], plan_depth[6], plan_depth[7]);
+        $fclose(file);
+        for (int b = 0; b < BUFFER_COUNT; b++) begin
+            if (fields != 9 || plan_depth[b] != int'(BUFFER_DEPTH[b])) begin
+                $fatal(1, "FAIL: buffer %0d is %0d words per bank here, the program was laid out for %0d",
+                       b, BUFFER_DEPTH[b], plan_depth[b]);
+            end
+        end
+        $display("  program for %0d tokens", tokens);
 
         file = $fopen(vector_file("program_ops.txt"), "r");
         while (!$feof(file)) begin

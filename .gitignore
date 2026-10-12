@@ -22,6 +22,8 @@ golden/vectors/deit/
 golden/vectors/deit_forward/
 golden/images_calibration/
 golden/images_heldout/
+golden/vectors/mnist112/
+golden/mnist/
 
 # Python
 __pycache__/

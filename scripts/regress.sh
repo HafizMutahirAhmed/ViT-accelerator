@@ -30,6 +30,7 @@ runs=(
     "softmax"
     "matmul_engine_nonlinear"
     "encoder_program"
+    "encoder_program_mnist112"
 )
 
 snapshot_of() {

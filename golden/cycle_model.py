@@ -1,7 +1,7 @@
 """Cycle model of matmul_engine, checked against a tb_matmul_engine_deit log.
 
 Usage: python3 golden/cycle_model.py [sim/sim_matmul_engine_deit.log]
-       python3 golden/cycle_model.py --program [sim/sim_encoder_program.log]
+       python3 golden/cycle_model.py --program [sim/sim_encoder_program.log [vector directory name]]
        --program models the whole descriptor program of golden/layer_program.py,
        entry by entry, and checks it against a tb_encoder_program log.
 
@@ -106,9 +106,9 @@ def load_ops():
 ROW_KINDS = {1: "add", 2: "gelu", 3: "layernorm", 4: "softmax"}
 
 
-def program_main(log_name):
+def program_main(log_name, directory="deit_forward"):
     """The descriptor program, entry by entry, against a tb_encoder_program log."""
-    forward_dir = os.path.join(os.path.dirname(VEC_DIR), "deit_forward")
+    forward_dir = os.path.join(os.path.dirname(VEC_DIR), directory)
     with open(os.path.join(forward_dir, "program_desc.hex")) as f:
         words = [int(line, 16) for line in f]
     count = PARAMS["DESCRIPTOR_WORDS"]
@@ -156,7 +156,7 @@ def program_main(log_name):
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--program":
-        return program_main(sys.argv[2] if len(sys.argv) > 2 else None)
+        return program_main(sys.argv[2] if len(sys.argv) > 2 else None, *sys.argv[3:4])
     ops = load_ops()
     simulated = {}
     if len(sys.argv) > 1:

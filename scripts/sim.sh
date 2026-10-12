@@ -6,7 +6,8 @@
 #
 # Compiles rtl/vit_config_pkg.sv first, then every other rtl/*.sv and
 # tb/tb_<module>.sv, then runs tb_<module>. PARAM=value pairs override
-# testbench parameters.
+# testbench parameters. A testbench file may ask for another testbench file to
+# be compiled with it by a line "// sim.sh: also compile tb_other.sv".
 #
 # Every run works in its own directory, sim/<snapshot>/, so several runs can
 # go in parallel. sim/golden links to golden/, which keeps the testbenches'
@@ -30,6 +31,12 @@ for f in "$root"/rtl/*.sv; do
     [ "$f" = "$pkg" ] || rtl+=("$f")
 done
 
+# a testbench that wraps another one names it in a line "// sim.sh: also compile <file>"
+extra=()
+while read -r also; do
+    extra+=("$root/tb/$also")
+done < <(sed -n 's|^// sim.sh: also compile ||p' "$root/tb/tb_$mod.sv")
+
 snapshot=sim_$mod
 generics=()
 for g in "$@"; do
@@ -46,7 +53,7 @@ cd "$root/sim/$snapshot"
 log=../$snapshot.log
 status=0
 {
-    xvlog -sv "$pkg" "${rtl[@]}" "$root/tb/tb_$mod.sv" &&
+    xvlog -sv "$pkg" "${rtl[@]}" "${extra[@]}" "$root/tb/tb_$mod.sv" &&
     xelab "tb_$mod" -s "$snapshot" "${generics[@]}" &&
     xsim "$snapshot" -runall
 } 2>&1 | tee "$log" || status=$?

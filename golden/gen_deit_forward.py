@@ -115,7 +115,10 @@ def capture_all(model, image):
 class Model:
     """Quantized weights, FP32 parameters and scales: everything that does not depend on the image."""
 
-    def __init__(self, model, target):
+    def __init__(self, model, target, classifiers=None, final_all_rows=None):
+        """classifiers: (name, weight 192 x N, bias, rows, target key, FP32 key or None) per classifier head,
+        rows being "class" (the class row only) or "all". The default is the model's own head on the class
+        row, as head10 (its first ten classes) and head1000."""
         self.target = target
         self.embed = model.embed_dim
         self.heads = model.blocks[0].attn.num_heads
@@ -147,9 +150,18 @@ class Model:
             for name, norm in (("ln1", block.norm1), ("ln2", block.norm2)):
                 self.norm[f"L{layer}_{name}"] = (numpy(norm.weight), numpy(norm.bias), norm.eps)
         self.norm["final_ln"] = (numpy(model.norm.weight), numpy(model.norm.bias), model.norm.eps)
-        head_weight, head_bias = numpy(model.head.weight).T, numpy(model.head.bias)
-        add_linear("head1000", head_weight, head_bias)
-        add_linear("head10", head_weight[:, :10], head_bias[:10])
+        if classifiers is None:
+            head_weight, head_bias = numpy(model.head.weight).T, numpy(model.head.bias)
+            classifiers = [("head10", head_weight[:, :10], head_bias[:10], "class", "head_out", None),
+                           ("head1000", head_weight, head_bias, "class", "head_out", "head_out")]
+        self.classifiers = []
+        for name, weight, bias, rows, target_key, fp_key in classifiers:
+            add_linear(name, np.asarray(weight, dtype=np.float64), np.asarray(bias, dtype=np.float64))
+            self.classifiers.append((name, rows, target_key, fp_key))
+        # the final LayerNorm covers every row as soon as one classifier reads every row
+        self.final_all_rows = any(rows == "all" for _name, rows, _t, _f in self.classifiers)
+        if final_all_rows is not None:
+            self.final_all_rows = final_all_rows
 
         position = numpy(model.pos_embed)[0]
         self.embed_bias = numpy(model.patch_embed.proj.bias)
@@ -330,9 +342,14 @@ class Forward:
                               f"{p}_x_out")
 
         # the 2-layer truncated model: final LayerNorm on the class row, then the classifier
-        final, final_scale = keep("final_ln", *self.layernorm("final_ln", x[0:1], x_scale, "head_in"), "head_in")
-        keep("head10", *self.linear("head10", "head", "final_ln", final, final_scale, "head_out"))
-        keep("head1000", *self.linear("head1000", "head", "final_ln", final, final_scale, "head_out"), "head_out")
+        final_in = x if m.final_all_rows else x[0:1]
+        final, final_scale = keep("final_ln", *self.layernorm("final_ln", final_in, x_scale, "head_in"), "head_in")
+        for name, rows, target_key, fp_key in m.classifiers:
+            if rows == "all" or not m.final_all_rows:
+                a, a_name = final, "final_ln"
+            else:
+                a, a_name = keep("final_ln_class", final[0:1].copy(), final_scale)[0], "final_ln_class"
+            keep(name, *self.linear(name, "head", a_name, a, final_scale, target_key), fp_key)
         return self
 
 
@@ -492,8 +509,15 @@ class Evaluation:
         return self.stage_cosines["all integer"]
 
 
-def dump(parameters, fp, test_name):
-    """The test image: the engine ops for tb_matmul_engine_deit and every stage of the pass."""
+def dump(parameters, fp, test_name, forward_dir=None, matmul_dir=None, rom_dir=None, plan=None):
+    """The test image: the engine ops for tb_matmul_engine_deit and every stage of the pass.
+
+    The directories default to the 224 x 224 model's. matmul_dir=False skips the per-matmul vectors.
+    plan is the layer_program.Plan of the descriptor program.
+    """
+    FORWARD_DIR = forward_dir or globals()["FORWARD_DIR"]
+    MATMUL_DIR = globals()["MATMUL_DIR"] if matmul_dir is None else matmul_dir
+    ROM_DIR = rom_dir or globals()["ROM_DIR"]
     forward = Forward(parameters, INTEGER_OPS).run(fp)
 
     def fresh(directory):
@@ -501,38 +525,39 @@ def dump(parameters, fp, test_name):
         for stale in glob.glob(os.path.join(directory, "*")):
             os.remove(stale)
 
-    # golden/vectors/deit: one line per op in deit_ops.txt, name, group, A file, B file, bias file, Y file,
-    # descriptor file. A, B, Y are INT8 row-major, bias is INT32 per column.
-    fresh(MATMUL_DIR)
     written = set()
-    with open(os.path.join(MATMUL_DIR, "deit_ops.txt"), "w") as manifest:
-        for op in forward.matmuls:
-            name, (rows, inner), cols = op["name"], op["a"].shape, op["b"].shape[1]
-            row_tiles, col_tiles = -(-rows // SYS_ROW), -(-cols // SYS_COL)
-            bank_rows = row_tiles if op["drain_mode"] == COLUMN_SELECT else col_tiles
-            assert row_tiles * inner <= BANK_DEPTH and col_tiles * inner <= BANK_DEPTH, name
-            assert op["output_base"] + bank_rows * op["output_stride"] <= BANK_DEPTH, name
-            assert col_tiles <= PARAMS["BIAS_DEPTH"], name
-            descriptor = pack_descriptor(
-                opcode=PARAMS["OPCODE_MATMUL"], rows_total=rows, inner_dim=inner, cols_total=cols,
-                row_tiles=row_tiles, col_tiles=col_tiles,
-                activation_buffer_id=0, weight_buffer_id=1, output_buffer_id=2,
-                activation_base=0, weight_base=0, output_base=op["output_base"],
-                output_stride=op["output_stride"], bias_base=0, scale=op["scale"], shift=op["shift"],
-                drain_mode=op["drain_mode"], bias_enable=int(op["bias"] is not None), last_op=1)
-            a_file = f"{op['a_name']}_A.hex"
-            if a_file not in written:
-                write_hex(os.path.join(MATMUL_DIR, a_file), op["a"], DATA_WIDTH)
-                written.add(a_file)
-            write_hex(os.path.join(MATMUL_DIR, f"{name}_B.hex"), op["b"], DATA_WIDTH)
-            write_hex(os.path.join(MATMUL_DIR, f"{name}_Y.hex"), op["y"], DATA_WIDTH)
-            write_hex(os.path.join(MATMUL_DIR, f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex"), descriptor, 32)
-            bias_file = "-"
-            if op["bias"] is not None:
-                bias_file = f"{name}_bias.hex"
-                write_hex(os.path.join(MATMUL_DIR, bias_file), op["bias"], ACC_WIDTH)
-            manifest.write(f"{name} {op['group']} {a_file} {name}_B.hex {bias_file} {name}_Y.hex "
-                           f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex\n")
+    if MATMUL_DIR:
+        # golden/vectors/deit: one line per op in deit_ops.txt, name, group, A file, B file, bias file, Y file,
+        # descriptor file. A, B, Y are INT8 row-major, bias is INT32 per column.
+        fresh(MATMUL_DIR)
+        with open(os.path.join(MATMUL_DIR, "deit_ops.txt"), "w") as manifest:
+            for op in forward.matmuls:
+                name, (rows, inner), cols = op["name"], op["a"].shape, op["b"].shape[1]
+                row_tiles, col_tiles = -(-rows // SYS_ROW), -(-cols // SYS_COL)
+                bank_rows = row_tiles if op["drain_mode"] == COLUMN_SELECT else col_tiles
+                assert row_tiles * inner <= BANK_DEPTH and col_tiles * inner <= BANK_DEPTH, name
+                assert op["output_base"] + bank_rows * op["output_stride"] <= BANK_DEPTH, name
+                assert col_tiles <= PARAMS["BIAS_DEPTH"], name
+                descriptor = pack_descriptor(
+                    opcode=PARAMS["OPCODE_MATMUL"], rows_total=rows, inner_dim=inner, cols_total=cols,
+                    row_tiles=row_tiles, col_tiles=col_tiles,
+                    activation_buffer_id=0, weight_buffer_id=1, output_buffer_id=2,
+                    activation_base=0, weight_base=0, output_base=op["output_base"],
+                    output_stride=op["output_stride"], bias_base=0, scale=op["scale"], shift=op["shift"],
+                    drain_mode=op["drain_mode"], bias_enable=int(op["bias"] is not None), last_op=1)
+                a_file = f"{op['a_name']}_A.hex"
+                if a_file not in written:
+                    write_hex(os.path.join(MATMUL_DIR, a_file), op["a"], DATA_WIDTH)
+                    written.add(a_file)
+                write_hex(os.path.join(MATMUL_DIR, f"{name}_B.hex"), op["b"], DATA_WIDTH)
+                write_hex(os.path.join(MATMUL_DIR, f"{name}_Y.hex"), op["y"], DATA_WIDTH)
+                write_hex(os.path.join(MATMUL_DIR, f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex"), descriptor, 32)
+                bias_file = "-"
+                if op["bias"] is not None:
+                    bias_file = f"{name}_bias.hex"
+                    write_hex(os.path.join(MATMUL_DIR, bias_file), op["bias"], ACC_WIDTH)
+                manifest.write(f"{name} {op['group']} {a_file} {name}_B.hex {bias_file} {name}_Y.hex "
+                               f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex\n")
 
     # golden/vectors/deit_forward: every stage, the tables and the constants
     fresh(FORWARD_DIR)
@@ -600,12 +625,15 @@ def dump(parameters, fp, test_name):
                                f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex {extra[0]} {extra[1]}\n")
     # the whole pass as one descriptor program
     stage_file = {tensor_id: name + ".hex" for tensor_id, name in stage_of.items()}
-    program = layer_program.build(forward, stage_file, FORWARD_DIR)
+    program = layer_program.build(forward, stage_file, FORWARD_DIR, plan)
     print("\n" + layer_program.summary(program))
 
-    print(f"\nwrote {len(os.listdir(MATMUL_DIR))} files to {os.path.relpath(MATMUL_DIR, GOLDEN_DIR)} "
-          f"({len(forward.matmuls)} engine ops) and {len(os.listdir(FORWARD_DIR))} files to "
-          f"{os.path.relpath(FORWARD_DIR, GOLDEN_DIR)}, test image {test_name}")
+    if MATMUL_DIR:
+        print(f"\nwrote {len(os.listdir(MATMUL_DIR))} files to {os.path.relpath(MATMUL_DIR, GOLDEN_DIR)} "
+              f"({len(forward.matmuls)} engine ops)")
+    print(f"wrote {len(os.listdir(FORWARD_DIR))} files to {os.path.relpath(FORWARD_DIR, GOLDEN_DIR)}, "
+          f"test image {test_name}")
+    return forward
 
 
 def main():
