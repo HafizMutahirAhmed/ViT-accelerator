@@ -24,6 +24,8 @@ runs=(
     "matmul_stream_controller SYS_ROW=4 SYS_COL=4"
     "matmul_stream_controller SYS_ROW=8 SYS_COL=8"
     "requantize"
+    "residual_add"
+    "matmul_engine_nonlinear"
 )
 
 snapshot_of() {

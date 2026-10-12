@@ -74,6 +74,24 @@ package vit_config_pkg;
     parameter  BIAS_ADDRESS_WIDTH = $clog2(BIAS_DEPTH);
 
     parameter  OPCODE_MATMUL = 4'd0;
+    // row ops: the tensor is walked row tile by row tile, SYS_ROW rows at a time.
+    // They use rows_total, row_tiles, cols_total (the row length), the buffer
+    // ids and bases, output_stride and last_op like a matmul, and
+    //   OPCODE_ADD  activation and weight name the two operands, both in row
+    //               banks; scale = multiplier of the first, bias_base[7:0] =
+    //               multiplier of the second, shift = their common shift
+    parameter  OPCODE_ADD    = 4'd1;
+
+    // row ops: passes over a row tile are counted in this many bits
+    parameter  ROW_OP_PASS_WIDTH = 2;
+
+    // cycles from a row_op_reader address to the read data at a row op
+    // datapath in matmul_engine: address register per buffer, the buffer read,
+    // read data register
+    parameter  ROW_OP_READ_LATENCY = BUFFER_READ_LATENCY + 2;
+
+    // cycles through residual_add: operand, product, sum, shifted, output
+    parameter  RESIDUAL_ADD_LATENCY = 5;
 
     // One op of the engine. The first field is the most significant. In the
     // descriptor memory the struct sits in the low DESCRIPTOR_WIDTH bits of a

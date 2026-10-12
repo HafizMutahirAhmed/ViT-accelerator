@@ -20,7 +20,11 @@ cycle counts here are the plan: one row unit per bank of the row-bank layout,
 so SYS_ROW rows are processed together and each pass over a row tile takes one
 cycle per row element. The pipeline depths in PLAN are estimates until there
 is RTL to measure.
-  add, gelu   cycles = 4 + tiles * N + tail                    one pass
+  add         cycles = 4 + tiles * N + ROW_OP_READ_LATENCY + RESIDUAL_ADD_LATENCY + 5
+                       built; the 5 are the result register, the writer register, the
+                       pool write register and two cycles to end the op. Measured in
+                       tb_matmul_engine_nonlinear: 4,820 for 197 x 192.
+  gelu        cycles = 4 + tiles * N + tail                    one pass
   layernorm   cycles = 4 + tiles * (2 * N + gap) + tail        statistics pass, output pass
   softmax     cycles = 4 + tiles * (3 * N + gap) + tail        max pass, sum pass, output pass
   tiles = ceil(rows / SYS_ROW), N = row length
@@ -48,7 +52,6 @@ def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
 
 # planned pipeline depths of the non-linear units, in cycles
 PLAN = {
-    "add_pipeline": 3,          # multiply, add, round/shift/clip
     "gelu_pipeline": 2,         # table read, table output register
     "layernorm_statistics": 7,  # square and accumulate 2, variance 3, reciprocal square root table 2
     "layernorm_pipeline": 7,    # centre 1, times reciprocal 2, shift 1, times gain 2, offset/shift/clip 1
@@ -63,8 +66,11 @@ def nonlinear_cycles(kind, rows, length, lanes):
     """Planned cycles of one non-linear op on rows x length, `lanes` rows at a time."""
     tiles = -(-rows // lanes)
     read, write = PARAMS["BUFFER_READ_LATENCY"], PARAMS["POOL_WRITE_LATENCY"]
-    if kind in ("add", "gelu"):
-        per_tile, pipeline = length, PLAN[kind + "_pipeline"]
+    if kind == "add":
+        return (4 + tiles * length + PARAMS["ROW_OP_READ_LATENCY"] + PARAMS["RESIDUAL_ADD_LATENCY"]
+                + 2 + write + 2)
+    if kind == "gelu":
+        per_tile, pipeline = length, PLAN["gelu_pipeline"]
     elif kind == "layernorm":
         per_tile = 2 * length + read + PLAN["layernorm_statistics"]
         pipeline = PLAN["layernorm_pipeline"]

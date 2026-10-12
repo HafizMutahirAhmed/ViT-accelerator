@@ -15,8 +15,17 @@
 // weight_buffer_id and writing the result to buffer output_buffer_id in the
 // layout picked by drain_mode. An op's output buffer is used by a later op
 // simply by naming its id: nothing is copied. The three ids of an op must
-// differ, because a buffer has one read port and one write port. Other
-// opcodes are skipped.
+// differ, because a buffer has one read port and one write port.
+//
+// Row ops (OPCODE_ADD; see vit_config_pkg) work on tensors in row banks, SYS_ROW
+// rows at a time. row_op_reader issues the read addresses, the op's datapath
+// processes the read data and row_op_writer writes the result. A row op may
+// write to the buffer it reads (in place): a word is written only after it
+// was read. The two operands of an add must be in different buffers. Row ops
+// reach the pool through registers of their own: a read address register per
+// buffer, read data registers and a result register.
+//
+// Any other opcode is skipped.
 //
 // Pool buffers have max(SYS_ROW, SYS_COL) banks; the activation side uses the
 // first SYS_ROW of them and the weight side the first SYS_COL. BUFFER_DEPTH
@@ -83,6 +92,7 @@ module matmul_engine #(
 
     import vit_config_pkg::descriptor_t;
     import vit_config_pkg::OPCODE_MATMUL;
+    import vit_config_pkg::OPCODE_ADD;
 
     localparam int BUFFER_COUNT            = vit_config_pkg::BUFFER_COUNT;
     localparam int BANK_DEPTH_MAX          = vit_config_pkg::BANK_DEPTH_MAX;
@@ -143,9 +153,10 @@ module matmul_engine #(
         STATE_FETCH,   // descriptor memory read
         STATE_LOAD,    // memory output into the fetch register
         STATE_APPLY,   // fetch register into the register bank
-        STATE_LAUNCH,  // start the stream controller
-        STATE_RUN,     // until the last tile is done
-        STATE_DRAIN    // until the drain has written everything
+        STATE_LAUNCH,  // start the stream controller or the row op
+        STATE_RUN,     // matmul: until the last tile is done
+        STATE_DRAIN,   // until the drain has written everything
+        STATE_ROW_OP   // row op: until its last word is written
     } state_t;
 
     state_t      state;
@@ -156,8 +167,15 @@ module matmul_engine #(
     logic all_tiles_done;
     logic drain_busy;
 
+    logic is_row_op;
+    logic row_op_start;
+    logic row_op_done;
+    logic row_op_active;   // registered: high from the cycle after a row op starts until it is done
+
     assign busy             = state != STATE_IDLE;
     assign controller_start = state == STATE_LAUNCH && descriptor.opcode == OPCODE_MATMUL;
+    assign is_row_op        = descriptor.opcode == OPCODE_ADD;
+    assign row_op_start     = state == STATE_LAUNCH && is_row_op;
 
     always_ff @(posedge CLK) begin
         if (reset) begin
@@ -185,7 +203,13 @@ module matmul_engine #(
                     state      <= STATE_LAUNCH;
                 end
                 STATE_LAUNCH: begin
-                    state <= (descriptor.opcode == OPCODE_MATMUL) ? STATE_RUN : STATE_DRAIN;
+                    state <= (descriptor.opcode == OPCODE_MATMUL) ? STATE_RUN
+                             : is_row_op ? STATE_ROW_OP : STATE_DRAIN;
+                end
+                STATE_ROW_OP: begin
+                    if (row_op_done) begin
+                        state <= STATE_DRAIN;
+                    end
                 end
                 STATE_RUN: begin
                     if (all_tiles_done) begin
@@ -211,15 +235,34 @@ module matmul_engine #(
         end
     end
 
-    // simulation check: a buffer cannot have two roles in one op
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            row_op_active <= 1'b0;
+        end
+        else if (row_op_start) begin
+            row_op_active <= 1'b1;
+        end
+        else if (row_op_done) begin
+            row_op_active <= 1'b0;
+        end
+    end
+
+    // simulation checks, per opcode: a buffer has one read port and one write port
     always_ff @(posedge CLK) begin
         if (controller_start) begin
+            // matmul: no buffer can have two roles
             assert (descriptor.activation_buffer_id != descriptor.weight_buffer_id
                     && descriptor.activation_buffer_id != descriptor.output_buffer_id
                     && descriptor.weight_buffer_id != descriptor.output_buffer_id)
             else $error("matmul_engine: descriptor %0d uses a buffer id twice (activation %0d, weight %0d, output %0d)",
                         descriptor_index, descriptor.activation_buffer_id,
                         descriptor.weight_buffer_id, descriptor.output_buffer_id);
+        end
+        if (row_op_start && descriptor.opcode == OPCODE_ADD) begin
+            // add: two reads at once need two buffers; the output may be either of them
+            assert (descriptor.activation_buffer_id != descriptor.weight_buffer_id)
+            else $error("matmul_engine: add descriptor %0d reads both operands from buffer %0d",
+                        descriptor_index, descriptor.activation_buffer_id);
         end
     end
 
@@ -264,12 +307,116 @@ module matmul_engine #(
     );
 
     // ------------------------------------------------------------------
+    // row ops: reader, datapath, writer
+    // ------------------------------------------------------------------
+    localparam int ROW_OP_PASS_WIDTH = vit_config_pkg::ROW_OP_PASS_WIDTH;
+
+    logic [ADDRESS_WIDTH-1:0]                  row_read_address_a;
+    logic [ADDRESS_WIDTH-1:0]                  row_read_address_b;
+    logic                                      row_data_valid;
+    logic [ROW_OP_PASS_WIDTH-1:0]              row_data_pass;
+    logic                                      row_data_first;
+    logic                                      row_data_last;
+    logic [SYS_ROW-1:0]                        row_data_lane_valid;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] row_data_a;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] row_data_b;
+    logic                                      row_result_valid;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] row_result_data;
+    logic [SYS_ROW-1:0]                        row_write_enable;
+    logic [ADDRESS_WIDTH-1:0]                  row_write_address;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] row_write_data;
+
+    row_op_reader #(
+        .LANES        (SYS_ROW),
+        .BANK_DEPTH   (BANK_DEPTH_MAX),
+        .DATA_LATENCY (vit_config_pkg::ROW_OP_READ_LATENCY)
+    ) row_reader (
+        .CLK             (CLK),
+        .reset           (reset),
+        .start           (row_op_start),
+        .rows_total      (descriptor.rows_total),
+        .row_length      (descriptor.cols_total),
+        .row_tiles       (descriptor.row_tiles),
+        .passes          ('0),
+        .base_a          (descriptor.activation_base),
+        .base_b          (descriptor.weight_base),
+        .pass_ready      (1'b1),
+        .read_address_a  (row_read_address_a),
+        .read_address_b  (row_read_address_b),
+        .data_valid      (row_data_valid),
+        .data_pass       (row_data_pass),
+        .data_first      (row_data_first),
+        .data_last       (row_data_last),
+        .data_lane_valid (row_data_lane_valid)
+    );
+
+    logic                                      add_valid;
+    logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0] add_sum;
+
+    residual_add #(
+        .LANES      (SYS_ROW),
+        .DATA_WIDTH (DATA_WIDTH)
+    ) add_inst (
+        .CLK          (CLK),
+        .reset        (reset),
+        .valid_in     (row_data_valid),
+        .a_in         (row_data_a),
+        .b_in         (row_data_b),
+        .multiplier_a (descriptor.scale),
+        .multiplier_b (descriptor.bias_base[vit_config_pkg::SCALE_WIDTH-1:0]),
+        .shift_value  (descriptor.shift),
+        .valid_out    (add_valid),
+        .sum_out      (add_sum)
+    );
+
+    // result register: the datapath of the running row op
+    always_ff @(posedge CLK) begin
+        if (reset) begin
+            row_result_valid <= 1'b0;
+        end
+        else begin
+            row_result_valid <= add_valid;
+        end
+        row_result_data <= add_sum;
+    end
+
+    row_op_writer #(
+        .LANES      (SYS_ROW),
+        .DATA_WIDTH (DATA_WIDTH),
+        .BANK_DEPTH (BANK_DEPTH_MAX),
+        .DONE_DELAY (POOL_WRITE_LATENCY + 1)
+    ) row_writer (
+        .CLK           (CLK),
+        .reset         (reset),
+        .start         (row_op_start),
+        .rows_total    (descriptor.rows_total),
+        .row_length    (descriptor.cols_total),
+        .row_tiles     (descriptor.row_tiles),
+        .output_base   (descriptor.output_base),
+        .output_stride (descriptor.output_stride),
+        .result_valid  (row_result_valid),
+        .result_data   (row_result_data),
+        .write_enable  (row_write_enable),
+        .write_address (row_write_address),
+        .write_data    (row_write_data),
+        .done          (row_op_done)
+    );
+
+    // ------------------------------------------------------------------
     // buffer pool
     // ------------------------------------------------------------------
     logic [LANES-1:0]                                   drain_write_enable;
     logic [ADDRESS_WIDTH-1:0]                           drain_write_address;
     logic signed [LANES-1:0][DATA_WIDTH-1:0]            drain_write_data;
     logic [BUFFER_COUNT-1:0][LANES-1:0][DATA_WIDTH-1:0] pool_read_data;
+
+    // row op read data: registered multiplexers over the pool
+    always_ff @(posedge CLK) begin
+        for (int i = 0; i < SYS_ROW; i++) begin
+            row_data_a[i] <= pool_read_data[descriptor.activation_buffer_id][i];
+            row_data_b[i] <= pool_read_data[descriptor.weight_buffer_id][i];
+        end
+    end
 
     genvar buffer;
     generate
@@ -282,8 +429,28 @@ module matmul_engine #(
             logic [LANES-1:0][DATA_WIDTH-1:0] write_data;
             logic [DEPTH_ADDRESS_WIDTH-1:0]   read_address;
 
+            // row op: this buffer's read address, registered. The second
+            // operand's buffer gets its address, every other buffer the first's.
+            logic [DEPTH_ADDRESS_WIDTH-1:0] row_read_address_reg;
+            logic                           row_write_select;
+
+            always_ff @(posedge CLK) begin
+                row_read_address_reg <= (descriptor.weight_buffer_id == BUFFER_ID_WIDTH'(buffer))
+                                        ? row_read_address_b[DEPTH_ADDRESS_WIDTH-1:0]
+                                        : row_read_address_a[DEPTH_ADDRESS_WIDTH-1:0];
+                row_write_select     <= descriptor.output_buffer_id == BUFFER_ID_WIDTH'(buffer);
+            end
+
             always_comb begin
-                if (busy) begin
+                if (row_op_active) begin
+                    write_enable  = '0;
+                    write_data    = '0;
+                    write_enable[SYS_ROW-1:0] = row_write_select ? row_write_enable : '0;
+                    write_data[SYS_ROW-1:0]   = row_write_data;
+                    write_address = row_write_address[DEPTH_ADDRESS_WIDTH-1:0];
+                    read_address  = row_read_address_reg;
+                end
+                else if (busy) begin
                     // writes come from the drain, gated by the output buffer id
                     write_enable  = (descriptor.output_buffer_id == BUFFER_ID_WIDTH'(buffer)) ? drain_write_enable : '0;
                     write_address = drain_write_address[DEPTH_ADDRESS_WIDTH-1:0];
