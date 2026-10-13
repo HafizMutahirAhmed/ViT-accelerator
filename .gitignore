@@ -11,8 +11,9 @@
 *.str
 webtalk*
 
-# Simulation outputs
+# Simulation and build outputs
 sim/
+build/
 xsim.dir/
 *.wdb
 *.pb
