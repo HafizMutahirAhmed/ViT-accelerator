@@ -1,10 +1,13 @@
 """Run one image through the accelerator and print the digit it sees.
 
 Usage:
+  python3 python/run_image.py --port /dev/ttyUSB1 --ping             is the board there?
   python3 python/run_image.py --port /dev/ttyUSB1 --digit 0          a board on a serial port
   python3 python/run_image.py --model --digit 0                      the software model of the board
   python3 python/run_image.py --port /dev/ttyUSB1 --png digit.png --check
 
+  --ping         only ask the board for its status and print it: a link check that takes
+                 a moment. Exit code 0 if the board answered and its error flag is clear.
   --digit N      MNIST test digit N (from python/mnist, as torchvision downloads it)
   --png FILE     any image file; it is made greyscale and resized to 112 x 112
   --baud N       serial speed, default 921600
@@ -159,6 +162,37 @@ def run(link, program, embed_in, check=None, verbose=True, clear=False):
     return outputs["head_mean"], outputs["head_class"], cycles
 
 
+def ping(args):
+    """STATUS, once: is there a board that speaks the protocol, and is it happy?"""
+    if args.model:
+        import engine_model
+        program = Program(args.program)
+        link = protocol.HostLink(engine_model.ModelDevice(program.depths, os.path.join(
+            REPO_DIR, program.config["rom_dir"])))
+        where = "the software model"
+    else:
+        import transports
+        where = f"{args.port} at {args.baud} baud"
+        try:
+            link = protocol.HostLink(transports.SerialTransport(args.port, args.baud, timeout=2.0))
+        except Exception as error:   # the port does not exist, is busy, or needs the dialout group
+            print(f"PING FAIL: cannot open {args.port}: {error}")
+            return 1
+    try:
+        flags, cycles = link.status()
+    except protocol.ProtocolError as error:
+        print(f"PING FAIL: no valid answer from {where}: {error}")
+        return 1
+    busy, done, error_flag = (bool(flags & bit) for bit in (protocol.FLAG_BUSY, protocol.FLAG_DONE,
+                                                             protocol.FLAG_ERROR))
+    print(f"PING OK: {where} answered")
+    print(f"  busy  {int(busy)}   the engine is {'running' if busy else 'idle'}")
+    print(f"  done  {int(done)}   {'a run has finished since the last START or CLEAR' if done else 'no finished run'}")
+    print(f"  error {int(error_flag)}   {'a command was refused or had a wrong checksum; CLEAR resets this' if error_flag else 'no protocol error'}")
+    print(f"  busy cycles of the last run: {cycles}")
+    return 1 if error_flag else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port")
@@ -170,10 +204,15 @@ def main():
     parser.add_argument("--golden", action="store_true")
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--clear", action="store_true")
+    parser.add_argument("--ping", action="store_true")
     parser.add_argument("--program", default=os.path.join(HOST_DIR, "vectors", "mnist112"))
     args = parser.parse_args()
-    if (args.port is None) == (not args.model) or (args.digit is None) == (args.png is None):
-        parser.error("give --port or --model, and --digit or --png")
+    if (args.port is None) == (not args.model):
+        parser.error("give --port or --model")
+    if args.ping:
+        return ping(args)
+    if (args.digit is None) == (args.png is None):
+        parser.error("give --digit or --png (or --ping)")
 
     program = Program(args.program)
     label = None
