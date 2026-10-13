@@ -3,7 +3,7 @@
 // Self-checking testbench that plays the byte stream of the real host script
 // to the RTL (vit_accelerator: host_link and matmul_engine).
 //
-// host/run_image.py --model --digit 0 --golden --clear --record ran the whole
+// python/run_image.py --model --digit 0 --golden --clear --record ran the whole
 // 112 x 112 MNIST program against the software model of the board and wrote
 // down every byte it sent and every byte the model answered. Here the same
 // packets go to the RTL, one byte per cycle, and every response must equal
@@ -15,13 +15,13 @@
 // So this checks the host software's packets against the hardware's protocol
 // implementation, and the software model against the hardware.
 //
-// Vectors: golden/vectors/mnist112/host_stream_tx.hex, host_stream_rx.hex
+// Vectors: python/vectors/mnist112/host_stream_tx.hex, host_stream_rx.hex
 // (one byte per line) and host_stream_packets.txt (bytes sent, bytes
 // received, 1 for a START, per packet). 8x8 only.
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_host_replay #(
-    parameter string VECTOR_DIR = "../golden/vectors/mnist112/"
+module tb_host_replay_mnist112 #(
+    parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
 );
 
     localparam int BUFFER_COUNT = vit_config_pkg::BUFFER_COUNT;
@@ -48,9 +48,9 @@ module tb_host_replay #(
         .SYS_ROW        (8),
         .SYS_COL        (8),
         .BUFFER_DEPTH   (BUFFER_DEPTH),
-        .GELU_ROM_FILE  ("rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
     ) dut (
         .CLK        (CLK),
         .reset      (reset),
@@ -95,7 +95,7 @@ module tb_host_replay #(
         name = {VECTOR_DIR, file_name};
         fd = $fopen(name, "r");
         if (fd == 0) begin
-            $fatal(1, "FAIL: cannot open vector file %s (run host/run_image.py --model --digit 0 --golden --clear --record)",
+            $fatal(1, "FAIL: cannot open vector file %s (run python/run_image.py --model --digit 0 --golden --clear --record)",
                    name);
         end
         $fclose(fd);
@@ -112,7 +112,7 @@ module tb_host_replay #(
         int starts    = 0;
         int waited;
 
-        $display("tb_host_replay: the host script's byte stream against the RTL");
+        $display("tb_host_replay_mnist112: the host script's byte stream against the RTL");
         $readmemh(vector_file("host_stream_tx.hex"), host_bytes);
         $readmemh(vector_file("host_stream_rx.hex"), model_bytes);
         reset    = 1'b1;

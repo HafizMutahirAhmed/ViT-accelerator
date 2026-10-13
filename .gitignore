@@ -18,12 +18,12 @@ xsim.dir/
 *.pb
 
 # Golden vectors and images that scripts/gen_vectors.sh regenerates
-golden/vectors/deit/
-golden/vectors/deit_forward/
-golden/images_calibration/
-golden/images_heldout/
-golden/vectors/mnist112/
-golden/mnist/
+python/vectors/deit/
+python/vectors/deit_forward/
+python/images_calibration/
+python/images_heldout/
+python/vectors/mnist112/
+python/mnist/
 
 # Python
 __pycache__/

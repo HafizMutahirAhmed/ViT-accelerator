@@ -3,9 +3,9 @@
 The same pretrained DeiT-Tiny, layers 0 and 1, on a 112 x 112 input: 49 patches
 and the class token, 50 tokens, with the position embedding resampled by timm
 to the 7 x 7 grid. A 28 x 28 MNIST digit is resized by 4. The classifier is a
-linear probe trained by host/train_probe.py.
+linear probe trained by python/train_probe.py.
 
-Images: torchvision's MNIST, downloaded to golden/mnist/ (not in the repo).
+Images: torchvision's MNIST, downloaded to python/mnist/ (not in the repo).
   calibration   train images 0..127: the activation scales (largest value / 127)
   probe         train images 128..6127: the linear probe is trained on these
   evaluation    test images 0..1999: accuracy; the first 64 also for cosine
@@ -25,8 +25,8 @@ from int8_ops import DATA_MAX
 
 GOLDEN_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(GOLDEN_DIR)
-sys.path.insert(0, os.path.join(REPO_DIR, "host"))
-import preprocess  # noqa: E402  (host/preprocess.py)
+sys.path.insert(0, GOLDEN_DIR)
+import preprocess  # noqa: E402
 
 NAME = "mnist112"
 TOKENS = 50
@@ -34,7 +34,7 @@ WEIGHT_DEPTH = 16384                       # words per bank of the weight buffer
 MNIST_DIR = os.path.join(GOLDEN_DIR, "mnist")
 VEC_DIR = os.path.join(GOLDEN_DIR, "vectors", NAME)
 ROM_DIR = os.path.join(REPO_DIR, "rtl", "rom", NAME)
-PROBE_FILE = os.path.join(REPO_DIR, "host", f"probe_{NAME}.npz")
+PROBE_FILE = os.path.join(GOLDEN_DIR, f"probe_{NAME}.npz")
 
 CALIBRATION = range(0, 128)
 PROBE_TRAIN = range(128, 6128)
@@ -91,7 +91,7 @@ def calibrate(model, train, capture_all):
 def load_probe():
     """The trained probe: classifiers for Model() and their output scales."""
     if not os.path.exists(PROBE_FILE):
-        raise SystemExit(f"{PROBE_FILE} is missing: run .venv/bin/python host/train_probe.py")
+        raise SystemExit(f"{PROBE_FILE} is missing: run .venv/bin/python python/train_probe.py")
     probe = np.load(PROBE_FILE)
     classifiers = [("head_mean", probe["mean_weight"], probe["mean_bias"], "all", "head_mean_out", "head_mean_out"),
                    ("head_class", probe["class_weight"], probe["class_bias"], "class", "head_class_out",

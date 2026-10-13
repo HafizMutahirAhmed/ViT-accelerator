@@ -1,7 +1,7 @@
 """Generate golden .hex vectors for the matmul (systolic array) and requantizer.
 
-Usage: python3 golden/gen_vectors.py
-Output: golden/vectors/*.hex, all in $readmemh format (one word per line,
+Usage: python3 python/gen_vectors.py
+Output: python/vectors/*.hex, all in $readmemh format (one word per line,
 two's complement, matrices in row-major order).
 
 Matmul cases, <case> = mm_small, mm_ragged, mm_extreme, mm_qkv, mm_k1, mm_k2,
@@ -16,7 +16,7 @@ mm_nobias:
   <case>_desc_r<R>c<C>_<row|col>.hex
                     one-op descriptor table for matmul_engine on an R x C
                     array, row-select or column-select drain: descriptor_t
-                    from rtl/vit_config_pkg.sv as 32-bit words, word 0 least
+                    from rtl/core/vit_config_pkg.sv as 32-bit words, word 0 least
                     significant
 
 Chained attention head for tb_matmul_engine_chain, DeiT-Tiny dimensions

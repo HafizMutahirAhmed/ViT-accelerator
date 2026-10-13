@@ -3,12 +3,12 @@
 ModelDevice takes the bytes the host sends and produces the bytes the board
 would answer. Behind the protocol is a model of matmul_engine that runs
 descriptors on the buffer pool with the integer arithmetic of the golden model
-(golden/int8_ops.py, golden/nonlinear_ops.py) and the ROM images the bitstream
+(python/int8_ops.py, python/nonlinear_ops.py) and the ROM images the bitstream
 contains. It needs numpy only. It is what `run_image.py --model` talks to, and
 what `--check` compares the board with.
 
 The model is not cycle accurate: START runs the phase at once and STATUS then
-reports idle, with the cycle count of golden/cycle_model.py.
+reports idle, with the cycle count of python/cycle_model.py.
 """
 
 import os
@@ -18,7 +18,7 @@ import numpy as np
 
 HOST_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(HOST_DIR)
-sys.path.insert(0, os.path.join(REPO_DIR, "golden"))
+sys.path.insert(0, HOST_DIR)
 import protocol  # noqa: E402
 from cycle_model import nonlinear_cycles, op_cycles  # noqa: E402
 from int8_ops import read_hex, requantize, wrap_signed  # noqa: E402

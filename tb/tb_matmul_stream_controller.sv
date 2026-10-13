@@ -9,7 +9,7 @@
 // INT32 golden <case>_C_acc.hex. It also checks the tile count, the tile
 // coordinates and that accumulators of lanes past the matrix edge are zero.
 //
-// Vectors come from golden/gen_vectors.py:
+// Vectors come from python/gen_vectors.py:
 //   <case>_cfg.hex    32-bit words: M, K, N, scale, shift
 //   <case>_A.hex      M*K  INT8   A[row][k]
 //   <case>_B.hex      K*N  INT8   B[k][col]
@@ -22,7 +22,7 @@
 module tb_matmul_stream_controller #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../golden/vectors/"
+    parameter string VECTOR_DIR = "../../python/vectors/"
 );
 
     localparam int DATA_WIDTH = vit_config_pkg::DATA_WIDTH;

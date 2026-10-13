@@ -1,9 +1,9 @@
 """Capture of the real pretrained DeiT-Tiny (ViT-Ti/16, 224x224) and the vectors made from it.
 
-Usage: .venv/bin/python golden/gen_deit_vectors.py     (needs torch and timm)
+Usage: .venv/bin/python python/gen_deit_vectors.py     (needs torch and timm)
 
-This is the same generator as golden/gen_deit_forward.py: the 39 matmuls in
-golden/vectors/deit/ are the engine ops of the chained integer forward pass, so
+This is the same generator as python/gen_deit_forward.py: the 39 matmuls in
+python/vectors/deit/ are the engine ops of the chained integer forward pass, so
 both vector directories come from one run. See that file for the scales, the
 rounding and the file formats.
 

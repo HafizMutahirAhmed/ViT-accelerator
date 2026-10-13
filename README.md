@@ -19,6 +19,98 @@ built yet.
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
 - [docs/SCHEDULE.md](docs/SCHEDULE.md): schedule
 
+## What is frozen and what is meant to change
+
+| Part | Status |
+|---|---|
+| `rtl/core/` | **Frozen.** The engine and the non-linear units. Application-agnostic: nothing in it knows about MNIST, a board or a transport. Change it only on purpose, with the full regression and a timing run. |
+| `rtl/interface/` | Meant to change: how a host reaches the engine (`host_link`, `vit_accelerator`, the AXI wrapper and bridge). |
+| `boards/<board>/` | Meant to change: one directory per board, with its top level, transport, constraints and build script. Nothing board-specific is anywhere else. |
+| `python/` application scripts | Meant to change: the model configurations, generators and host software (see the table below). The integer reference models in it (`int8_ops.py`, `nonlinear_ops.py`) define the arithmetic of `rtl/core` and change only with it. |
+| `rtl/rom/<configuration>/` | Generated: table images of one model configuration, written by the generators and kept in the repo because synthesis needs them. |
+
+## Folder layout
+
+| Folder | Contents |
+|---|---|
+| `rtl/core/` | Engine and non-linear units, one module per file. Every parameter lives in `vit_config_pkg.sv`. |
+| `rtl/interface/` | Host protocol on a byte stream, AXI wrapper and bridge. |
+| `rtl/rom/deit224/`, `rtl/rom/mnist112/` | GELU, exp and reciprocal-square-root table images of the two configurations. |
+| `tb/` | Every testbench, `tb_<name>.sv`. Each reads golden vectors and prints PASS or FAIL. |
+| `boards/arty_a7/` | Digilent Arty A7-100T: top level, UART, constraints, build script. |
+| `boards/opal_kelly/` | Opal Kelly XEM7310-A200: a stub for now. |
+| `python/` | Reference models, generators and host software; vectors in `python/vectors/`. |
+| `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them), `gen_vectors.sh`, Vivado Tcl scripts. |
+| `docs/` | Spec, engine description, host protocol, schedule. |
+| `legacy/` | Files from the earlier weight-stationary design, not used. |
+
+Simulation and build output goes to `sim/`, which is not tracked.
+
+### Python scripts
+
+| Script | What it is | MNIST-specific |
+|---|---|---|
+| `int8_ops.py`, `nonlinear_ops.py` | Bit-exact integer models of the engine's arithmetic | no |
+| `pkg_config.py` | Reads `vit_config_pkg.sv`; packs and unpacks descriptors | no |
+| `cycle_model.py` | Cycle counts of every op, checked against simulation logs | no |
+| `gen_vectors.py` | Synthetic vectors for the core testbenches | no |
+| `gen_deit_vectors.py`, `gen_deit_forward.py` | The ViT forward pass in integer arithmetic; generator of the 224 x 224 DeiT vectors | no |
+| `layer_program.py` | Lays a forward pass out as a descriptor program on the buffer pool | no |
+| `protocol.py`, `transports.py` | Host side of the byte protocol; serial transport | no |
+| `engine_model.py` | Software model of the protocol and the engine | no (its two precision constants match the tables in `rtl/rom`) |
+| `mnist_config.py`, `gen_mnist_forward.py` | The 112 x 112 MNIST configuration and its vectors | **yes** |
+| `preprocess.py` | Digit to 112 x 112 im2col matrix | **yes** |
+| `train_probe.py`, `probe_mnist112.npz` | The MNIST linear probes | **yes** |
+| `run_image.py` | Sends one digit to a board or the model and prints the answer | **yes** |
+
+### Testbenches by configuration
+
+| Testbenches | Vectors |
+|---|---|
+| `tb_systolic_array`, `tb_matmul_stream_controller`, `tb_drain`, `tb_requantize`, `tb_matmul_engine`, `tb_matmul_engine_chain` | synthetic, `python/vectors/*.hex` |
+| `tb_matmul_engine_deit224`, `tb_encoder_program` (its defaults), `tb_residual_add`, `tb_gelu_lut`, `tb_layernorm`, `tb_softmax`, `tb_matmul_engine_nonlinear` | 224 x 224 DeiT, `python/vectors/deit/` and `deit_forward/` |
+| `tb_encoder_program_mnist112`, `tb_host_link_mnist112`, `tb_host_replay_mnist112`, `tb_arty_top_mnist112` | 112 x 112 MNIST, `python/vectors/mnist112/` |
+
+### Known limitations
+
+- **`ViT-implementation.xpr` is obsolete.** It lists the sources at their old
+  paths. Nothing here uses it: simulation goes through `scripts/sim.sh` and
+  builds through the Tcl scripts.
+- **The engine's default ROM images are the DeiT-224 tables.**
+  `matmul_engine` defaults to `rom/gelu_rom.hex`, `rom/exp_rom.hex` and
+  `rom/rsqrt_rom.hex`, named relative to its own directory. `rtl/core/rom` is
+  a symbolic link to `rtl/rom/deit224` so that those defaults still resolve.
+  The GELU and exp tables depend on a model's scales, so the frozen core is
+  coupled to the DeiT-224 configuration through its defaults; another
+  configuration passes its own files (`../rom/mnist112/...`). The link does
+  not survive a checkout on Windows without symlink support.
+- **Comments inside `rtl/core` still say `golden/`** where they name the
+  reference models, which are now in `python/`. The files are frozen and were
+  moved without edits.
+
+## Running the tests
+
+The tests need Vivado xsim on the `PATH` (developed with Vivado 2022.2) and the
+vectors that are not kept in the repo (see the next section). From the
+repository root:
+
+```sh
+source <Vivado install>/settings64.sh
+scripts/gen_vectors.sh
+scripts/regress.sh
+```
+
+`regress.sh` is the one entry point: it runs every testbench configuration, 4
+at a time, and prints one PASS or FAIL line for each. It exits non-zero if any
+run fails. Pass a number to change how many run in parallel, for example
+`scripts/regress.sh 2`. Logs are in `sim/<snapshot>.log`.
+
+To run one testbench:
+
+```sh
+scripts/sim.sh systolic_array SYS_ROW=4 SYS_COL=4
+```
+
 ## Running on a board
 
 The first board is a Digilent Arty A7-100T, with a reduced configuration that
@@ -27,50 +119,12 @@ of matmuls over the USB-UART. See [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md)
 
 ```sh
 vivado -mode batch -source boards/arty_a7/build.tcl      # sim/arty_a7_build/arty_top.bit
-python3 host/run_image.py --port /dev/ttyUSB1 --digit 0 --check
-python3 host/run_image.py --model --digit 0 --golden     # no board: the software model
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --check
+python3 python/run_image.py --model --digit 0 --golden   # no board: the software model
 ```
 
-`host/run_image.py` needs the program files of `scripts/gen_vectors.sh`
-(`golden/vectors/mnist112/`), numpy, Pillow and pyserial.
-
-## Folder layout
-
-| Folder | Contents |
-|---|---|
-| `rtl/` | Synthesizable SystemVerilog, one module per file. Every parameter lives in `vit_config_pkg.sv`. |
-| `tb/` | Self-checking testbenches, `tb_<module>.sv`. Each reads golden `.hex` vectors and prints PASS or FAIL. |
-| `golden/` | Python golden model and vector generators. Vectors are in `golden/vectors/`, the DeiT ones in `golden/vectors/deit/`. |
-| `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them) and Vivado Tcl scripts. |
-| `docs/` | Spec, engine description and schedule. |
-| `boards/` | One directory per board: top level, transport, constraints, build script. Nothing board-specific is anywhere else. |
-| `host/` | Host software: the protocol, `run_image.py`, probe training, and a software model of the board. |
-| `legacy/` | Files from the earlier weight-stationary design, not used. |
-
-`ViT-implementation.xpr` is the Vivado project. Simulation output goes to
-`sim/`, which is not tracked.
-
-## Running the tests
-
-The tests need Vivado xsim on the `PATH` (developed with Vivado 2022.2) and the
-DeiT vectors, which are not kept in the repo (see the next section):
-
-```sh
-source <Vivado install>/settings64.sh
-scripts/gen_vectors.sh
-scripts/regress.sh
-```
-
-`regress.sh` runs 20 testbench configurations, 4 at a time, and prints one PASS
-or FAIL line for each. It exits non-zero if any run fails. Pass a number to
-change how many run in parallel, for example `scripts/regress.sh 2`. Logs are
-in `sim/<snapshot>.log`.
-
-To run one testbench:
-
-```sh
-scripts/sim.sh systolic_array SYS_ROW=4 SYS_COL=4
-```
+`run_image.py` needs the program files of `scripts/gen_vectors.sh`
+(`python/vectors/mnist112/`), numpy, Pillow and pyserial.
 
 ## Generating the vectors
 
@@ -78,25 +132,21 @@ scripts/sim.sh systolic_array SYS_ROW=4 SYS_COL=4
 
 | Step | Writes | In the repo |
 |---|---|---|
-| `scripts/fetch_images.sh` | `golden/images_calibration/` (128 images), `golden/images_heldout/` (25 images) | no, only the list `golden/image_lists.txt` |
-| `python3 golden/gen_vectors.py` | synthetic vectors, `golden/vectors/*.hex` | yes |
-| `.venv/bin/python golden/gen_deit_forward.py` | `golden/vectors/deit/` and `golden/vectors/deit_forward/` | no |
+| `scripts/fetch_images.sh` | `python/images_calibration/` (128 images), `python/images_heldout/` (25 images) | no, only the list `python/image_lists.txt` |
+| `python3 python/gen_vectors.py` | synthetic vectors, `python/vectors/*.hex` | yes |
+| `.venv/bin/python python/gen_deit_forward.py` | `python/vectors/deit/`, `python/vectors/deit_forward/`, `rtl/rom/deit224/` | vectors no, ROM images yes |
+| `.venv/bin/python python/gen_mnist_forward.py` | `python/vectors/mnist112/`, `rtl/rom/mnist112/` | vectors no, ROM images yes |
+| `python3 python/run_image.py --model ... --record` | the host byte stream for `tb_host_replay_mnist112` | no |
 
-The last step runs the real pretrained DeiT-Tiny and needs `torch` and `timm`
-in a local virtual environment, `.venv/`, which is not tracked:
+The generators that run the real pretrained DeiT-Tiny need `torch`, `timm` and
+`torchvision` in a local virtual environment, `.venv/`, which is not tracked:
 
 ```sh
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install torch torchvision timm
 ```
 
-The first run downloads the DeiT-Tiny weights. `gen_deit_forward.py` is the
-golden model of the whole 2-layer pass in integer arithmetic (the matmuls plus
-the residual add, GELU, LayerNorm and softmax of `golden/nonlinear_ops.py`). It
-takes its scales from the calibration images and prints the error against FP32
-for the calibration images and for the held-out images separately. The vectors
-are those of one test image, the first one in `golden/images/`:
-
-- `golden/vectors/deit/`: the 39 matmuls of the pass, for `tb_matmul_engine_deit`
-- `golden/vectors/deit_forward/`: every stage of the pass, the tables and the
-  constants of the non-linear ops
+The first run downloads the DeiT-Tiny weights and MNIST (to `python/mnist/`).
+`gen_deit_forward.py` takes its scales from the calibration images and prints
+the error against FP32 for the calibration images and for the held-out images
+separately.

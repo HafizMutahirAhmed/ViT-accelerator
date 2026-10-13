@@ -1,4 +1,4 @@
-"""Reads rtl/vit_config_pkg.sv so the golden model and the RTL share one definition.
+"""Reads rtl/core/vit_config_pkg.sv so the golden model and the RTL share one definition.
 
 PARAMS holds every package parameter as an int. DESCRIPTOR_FIELDS lists the
 fields of descriptor_t as (name, width, signed), most significant first, the
@@ -9,7 +9,7 @@ import os
 import re
 
 PACKAGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "..", "rtl", "vit_config_pkg.sv")
+                            "..", "rtl", "core", "vit_config_pkg.sv")
 
 
 def _clog2(value):

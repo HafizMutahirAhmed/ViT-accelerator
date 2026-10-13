@@ -36,7 +36,7 @@ regexp {Option Name="Part" Val="([^"]+)"} [read $fh] -> part
 close $fh
 puts "ooc_matmul_engine: part $part, clock period $period ns, ${size}x${size} array"
 
-# Words per bank of pool buffers 0..7: the plan of golden/layer_program.py,
+# Words per bank of pool buffers 0..7: the plan of python/layer_program.py,
 # for the same tensors at any array size. With T = ceil(197 / size) row tiles
 # and C = ceil(64 / size) column tiles of one head:
 #   0 X    residual stream               T * 192
@@ -151,7 +151,7 @@ proc report_memories {file_name} {
     close $fh
 }
 
-set rtl_dir [file join $repo_dir rtl]
+set rtl_dir [file join $repo_dir rtl core]
 set package [file join $rtl_dir vit_config_pkg.sv]
 set others  {}
 foreach f [lsort [glob -directory $rtl_dir *.sv]] {

@@ -7,9 +7,9 @@
 // the engine does it: LANES rows per cycle and, for each row tile, three
 // passes with a wait for pass_ready before the second and the third.
 // valid_in drops now and then. Every valid output is compared with the golden
-// tensor (0..127). The ROM is the one the design uses, rtl/rom/exp_rom.hex.
+// tensor (0..127). The ROM is the one the design uses, rtl/rom/deit224/exp_rom.hex.
 //
-// Vectors come from golden/gen_deit_forward.py, in golden/vectors/deit_forward:
+// Vectors come from python/gen_deit_forward.py, in python/vectors/deit_forward:
 //   nonlinear_ops.txt  one line per op: name, kind, s file, "-", p file,
 //                      descriptor file, "-", "-"
 //   s, p               INT8 rows x cols, row-major
@@ -18,7 +18,7 @@
 
 module tb_softmax #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../golden/vectors/deit_forward/"
+    parameter string VECTOR_DIR = "../../python/vectors/deit_forward/"
 );
 
     import vit_config_pkg::descriptor_t;

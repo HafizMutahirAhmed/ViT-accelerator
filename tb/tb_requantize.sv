@@ -7,7 +7,7 @@
 // valid_in is high on every other vector and valid_out must follow it by
 // LATENCY cycles.
 //
-// Vectors come from golden/gen_vectors.py:
+// Vectors come from python/gen_vectors.py:
 //   requant_cfg.hex    32-bit word: number of vectors
 //   requant_acc.hex    INT32
 //   requant_scale.hex  INT8 (signed)
@@ -16,7 +16,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_requantize #(
-    parameter string VECTOR_DIR = "../golden/vectors/"
+    parameter string VECTOR_DIR = "../../python/vectors/"
 );
 
     localparam int DATA_WIDTH  = vit_config_pkg::DATA_WIDTH;

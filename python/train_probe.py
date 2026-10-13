@@ -1,7 +1,7 @@
 """Train the MNIST linear probes on the features of the integer golden model.
 
-Usage: .venv/bin/python host/train_probe.py [--reuse]     (needs torch, timm, torchvision)
-Output: host/probe_mnist112.npz
+Usage: .venv/bin/python python/train_probe.py [--reuse]     (needs torch, timm, torchvision)
+Output: python/probe_mnist112.npz
 
 Features. Every digit goes through the integer 2-layer pass (the model the
 hardware runs) up to the final LayerNorm, which gives an INT8 50 x 192 tensor.
@@ -24,7 +24,7 @@ import torch
 import torch.nn.functional as F
 
 HOST_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(HOST_DIR), "golden"))
+sys.path.insert(0, HOST_DIR)
 import gen_deit_forward as golden  # noqa: E402
 import mnist_config as config  # noqa: E402
 from int8_ops import DATA_MAX  # noqa: E402

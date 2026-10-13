@@ -1,18 +1,18 @@
 """Run one image through the accelerator and print the digit it sees.
 
 Usage:
-  python3 host/run_image.py --port /dev/ttyUSB1 --digit 0          a board on a serial port
-  python3 host/run_image.py --model --digit 0                      the software model of the board
-  python3 host/run_image.py --port /dev/ttyUSB1 --png digit.png --check
+  python3 python/run_image.py --port /dev/ttyUSB1 --digit 0          a board on a serial port
+  python3 python/run_image.py --model --digit 0                      the software model of the board
+  python3 python/run_image.py --port /dev/ttyUSB1 --png digit.png --check
 
-  --digit N      MNIST test digit N (from golden/mnist, as torchvision downloads it)
+  --digit N      MNIST test digit N (from python/mnist, as torchvision downloads it)
   --png FILE     any image file; it is made greyscale and resized to 112 x 112
   --baud N       serial speed, default 921600
   --check        after every phase read back every op output that is still whole
                  and compare it with the software model fed the same bytes
   --golden       with --model: compare the stages with the golden files of
-                 golden/vectors/mnist112 instead (only right for the test digit)
-  --program DIR  the program directory, default golden/vectors/mnist112
+                 python/vectors/mnist112 instead (only right for the test digit)
+  --program DIR  the program directory, default python/vectors/mnist112
   --clear        write zeros to every pool buffer first. The bank words past a
                  tensor's last row are never written by an op; on a board they hold
                  what the block RAM was configured with (zeros), in a simulation
@@ -20,10 +20,10 @@ Usage:
   --record       with --model: write every byte sent and received to the program
                  directory (host_stream_tx.hex, host_stream_rx.hex, one byte per
                  line, and host_stream_packets.txt: bytes sent, bytes received and
-                 whether it is a START, per packet) for tb_host_replay, which plays
+                 whether it is a START, per packet) for tb_host_replay_mnist112, which plays
                  them to the RTL
 
-The program directory comes from golden/gen_mnist_forward.py: the descriptor
+The program directory comes from python/gen_mnist_forward.py: the descriptor
 table, the phases, what to load before each phase and where every stage is.
 This script quantizes the image, builds the im2col matrix, and follows
 docs/HOST_PROTOCOL.md: descriptors, then per phase the loads, START and
@@ -54,7 +54,7 @@ LANES = 8
 
 def mnist_test_digit(index):
     """(pixels 28 x 28 uint8, label) of MNIST test digit `index`."""
-    raw = os.path.join(REPO_DIR, "golden", "mnist", "MNIST", "raw")
+    raw = os.path.join(HOST_DIR, "mnist", "MNIST", "raw")
 
     def load(name, header):
         path = os.path.join(raw, name)
@@ -82,7 +82,7 @@ def read_hex_lines(path):
 
 
 class Program:
-    """The files golden/layer_program.py wrote."""
+    """The files python/layer_program.py wrote."""
 
     def __init__(self, directory):
         self.directory = directory
@@ -170,7 +170,7 @@ def main():
     parser.add_argument("--golden", action="store_true")
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--clear", action="store_true")
-    parser.add_argument("--program", default=os.path.join(REPO_DIR, "golden", "vectors", "mnist112"))
+    parser.add_argument("--program", default=os.path.join(HOST_DIR, "vectors", "mnist112"))
     args = parser.parse_args()
     if (args.port is None) == (not args.model) or (args.digit is None) == (args.png is None):
         parser.error("give --port or --model, and --digit or --png")

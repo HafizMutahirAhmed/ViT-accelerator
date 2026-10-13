@@ -46,12 +46,12 @@ copy. The frozen version is tagged `engine-v1.1`.
 
 | Module | File | Role |
 |---|---|---|
-| `matmul_engine` | `rtl/matmul_engine.sv` | Top level: sequencer, descriptor memory, pool, bias store, masking |
-| `matmul_stream_controller` | `rtl/matmul_stream_controller.sv` | Walks the tiles, issues read addresses, lane enables, `first_k`, `tile_done` |
-| `systolic_array`, `pe`, `skew` | `rtl/systolic_array.sv`, `rtl/pe.sv`, `rtl/skew.sv` | Output-stationary array; each PE keeps one accumulator |
-| `drain`, `requantize` | `rtl/drain.sv`, `rtl/requantize.sv` | Reads a finished tile out, adds bias, requantizes, writes INT8 |
-| `operand_buffer` | `rtl/operand_buffer.sv` | One buffer: a block RAM bank per array lane |
-| `vit_config_pkg` | `rtl/vit_config_pkg.sv` | Every parameter and the descriptor struct |
+| `matmul_engine` | `rtl/core/matmul_engine.sv` | Top level: sequencer, descriptor memory, pool, bias store, masking |
+| `matmul_stream_controller` | `rtl/core/matmul_stream_controller.sv` | Walks the tiles, issues read addresses, lane enables, `first_k`, `tile_done` |
+| `systolic_array`, `pe`, `skew` | `rtl/core/systolic_array.sv`, `rtl/core/pe.sv`, `rtl/core/skew.sv` | Output-stationary array; each PE keeps one accumulator |
+| `drain`, `requantize` | `rtl/core/drain.sv`, `rtl/core/requantize.sv` | Reads a finished tile out, adds bias, requantizes, writes INT8 |
+| `operand_buffer` | `rtl/core/operand_buffer.sv` | One buffer: a block RAM bank per array lane |
+| `vit_config_pkg` | `rtl/core/vit_config_pkg.sv` | Every parameter and the descriptor struct |
 
 ### How one op runs
 
@@ -71,7 +71,7 @@ copy. The frozen version is tagged `engine-v1.1`.
    per cycle, adds the bias, requantizes and writes the INT8 results.
 6. The array is not stalled during the drain. The next tile starts at once;
    its first slice reaches each accumulator only after the drain has read it
-   (the timing contract is written at the top of `rtl/drain.sv`).
+   (the timing contract is written at the top of `rtl/core/drain.sv`).
 
 ## Arithmetic
 
@@ -86,12 +86,12 @@ copy. The frozen version is tagged `engine-v1.1`.
 | Product `acc * scale` | kept at the full 40 bits |
 | Clip | to -128..127 |
 
-`golden/int8_ops.py` is the bit-exact reference for all of this.
+`python/int8_ops.py` is the bit-exact reference for all of this.
 
 ## Descriptor format
 
 One op is one `descriptor_t`, a packed struct in `vit_config_pkg`. This table
-is generated from the package by `python3 golden/pkg_config.py`; regenerate it
+is generated from the package by `python3 python/pkg_config.py`; regenerate it
 after changing the struct.
 
 | Field | Bits | Width | Meaning |
@@ -121,8 +121,8 @@ The struct is 153 bits. In the descriptor memory it sits in the low bits of a
 31:0. The field widths follow the package maximums through `$clog2`, so they
 change if those maximums change.
 
-`golden/pkg_config.py` parses the package, so `pack_descriptor()` in Python and
-the RTL always agree. `golden/gen_vectors.py` and `golden/gen_deit_vectors.py`
+`python/pkg_config.py` parses the package, so `pack_descriptor()` in Python and
+the RTL always agree. `python/gen_vectors.py` and `python/gen_deit_vectors.py`
 emit tables with it.
 
 Rules for a descriptor:
@@ -195,12 +195,12 @@ length), `activation_buffer_id` and `activation_base` (the operand),
 `output_buffer_id`, `output_base`, `output_stride` and `last_op`.
 
 - **Arithmetic** is in the header of each module and, bit for bit, in
-  `golden/nonlinear_ops.py`.
+  `python/nonlinear_ops.py`.
 - **In place.** A row op may write to the buffer it reads; a word is written
   only after it was read. The two operands of an add must be in different
   buffers. The checks are per opcode.
 - **Tables.** The GELU, exp and reciprocal-square-root tables are ROMs loaded
-  with `$readmemh` from `rtl/rom/`, written by `golden/gen_deit_forward.py`.
+  with `$readmemh` from `rtl/rom/`, written by `python/gen_deit_forward.py`.
 - **LayerNorm constants.** Gain (INT16) and offset (INT32) per column are
   written by the host: present `host_address`, `host_layernorm_write_gain`,
   `host_layernorm_write_offset` and `host_layernorm_write_enable` for one
@@ -209,7 +209,7 @@ length), `activation_buffer_id` and `activation_base` (the operand),
   and softmax need a row longer than 6 elements.
 
 Cycles for one op, with tiles = ceil(rows / SYS_ROW) and N the row length
-(`golden/cycle_model.py`, equal to the simulation):
+(`python/cycle_model.py`, equal to the simulation):
 
 | Op | Cycles | 197 rows |
 |---|---|---|
@@ -275,7 +275,7 @@ For one op on a SYS_ROW x SYS_COL array:
              + 2 + REQUANTIZE_LATENCY     drain pipeline
              + POOL_WRITE_LATENCY
 
-At 8x8 the overhead is 25 cycles. `golden/cycle_model.py` implements this
+At 8x8 the overhead is 25 cycles. `python/cycle_model.py` implements this
 formula and checks it against a simulation log; it matches all 39 DeiT-Tiny
 ops exactly.
 
@@ -294,7 +294,7 @@ cycles are the zero-fed flush between tiles.
 
 ## The forward pass as one descriptor program
 
-`golden/layer_program.py` lays the whole 2-layer pass out on the buffer pool
+`python/layer_program.py` lays the whole 2-layer pass out on the buffer pool
 and writes the descriptor table, the host load images and the golden tensor of
 every stage. `tb_encoder_program` runs it. Nothing is copied between ops.
 
@@ -407,12 +407,12 @@ phase's last output is also read back through the host port.
 |---|---|
 | `tb_encoder_program` | The whole forward pass as one descriptor program, loaded through the host port, every stage compared (see above) |
 | `tb_matmul_engine_nonlinear`, `tb_residual_add`, `tb_gelu_lut`, `tb_layernorm`, `tb_softmax` | The row ops, through the descriptor table and on their own |
-| `tb_matmul_engine_deit` | All 39 matmuls of the real pretrained DeiT-Tiny (patch embedding, layers 0 and 1, classifier), each on its real captured input, at 8x8 |
+| `tb_matmul_engine_deit224` | All 39 matmuls of the real pretrained DeiT-Tiny (patch embedding, layers 0 and 1, classifier), each on its real captured input, at 8x8 |
 | `tb_matmul_engine_chain` | A five-op attention-head table where each op reads what earlier ops wrote |
 | `tb_matmul_engine` | Single-op tables in both drain modes, with bases, padded strides and bias off |
 | `tb_drain`, `tb_matmul_stream_controller`, `tb_systolic_array`, `tb_requantize` | The blocks on their own |
 
-Every comparison is bit-exact against `golden/vectors/`. The engine
+Every comparison is bit-exact against `python/vectors/`. The engine
 testbenches also check that no word outside the result is written.
 
 Out-of-context place-and-route on the XC7A200T-1 (`xc7a200tfbg484-1`) with a

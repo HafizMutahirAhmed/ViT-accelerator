@@ -22,12 +22,12 @@
 // Bytes are offered one per cycle whenever rx_ready allows; tx_ready is
 // toggled pseudo-randomly, so the response path sees back-pressure.
 //
-// Vectors: golden/gen_mnist_forward.py, in golden/vectors/mnist112 (the same
+// Vectors: python/gen_mnist_forward.py, in python/vectors/mnist112 (the same
 // files tb_encoder_program_mnist112 uses). 8x8 only.
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_host_link #(
-    parameter string VECTOR_DIR     = "../golden/vectors/mnist112/",
+module tb_host_link_mnist112 #(
+    parameter string VECTOR_DIR     = "../../python/vectors/mnist112/",
     parameter int    DEPTH_X        = 1344,
     parameter int    DEPTH_W        = 16384,
     parameter int    DEPTH_BIG      = 5376,
@@ -36,9 +36,9 @@ module tb_host_link #(
     parameter int    DEPTH_QV       = 2544,
     parameter int    DEPTH_K        = 1344,
     parameter int    DEPTH_UNUSED   = 16,
-    parameter string GELU_ROM_FILE  = "rom/mnist112/gelu_rom.hex",
-    parameter string EXP_ROM_FILE   = "rom/mnist112/exp_rom.hex",
-    parameter string RSQRT_ROM_FILE = "rom/mnist112/rsqrt_rom.hex"
+    parameter string GELU_ROM_FILE  = "../rom/mnist112/gelu_rom.hex",
+    parameter string EXP_ROM_FILE   = "../rom/mnist112/exp_rom.hex",
+    parameter string RSQRT_ROM_FILE = "../rom/mnist112/rsqrt_rom.hex"
 );
 
     localparam int LANES            = 8;
@@ -417,7 +417,7 @@ module tb_host_link #(
         int cycles;
         string layout;
 
-        $display("tb_host_link: byte-level host of the 112 x 112 MNIST program");
+        $display("tb_host_link_mnist112: byte-level host of the 112 x 112 MNIST program");
         reset    = 1'b1;
         rx_valid = 1'b0;
         rx_data  = '0;

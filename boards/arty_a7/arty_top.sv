@@ -20,7 +20,7 @@
 // cleared by reset).
 //
 // Model configuration: the 112 x 112 MNIST one. The pool depths are the plan
-// golden/layer_program.py prints for 50 tokens and a 16,384-word weight
+// python/layer_program.py prints for 50 tokens and a 16,384-word weight
 // buffer (program_plan.txt), buffer 0 in the low word; the ROM images are
 // rtl/rom/mnist112.
 //////////////////////////////////////////////////////////////////////////////////
@@ -106,9 +106,9 @@ module arty_top #(
         .SYS_ROW        (8),
         .SYS_COL        (8),
         .BUFFER_DEPTH   ({32'd16, 32'd1344, 32'd2544, 32'd1050, 32'd1344, 32'd5376, 32'd16384, 32'd1344}),
-        .GELU_ROM_FILE  ("rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
     ) accelerator (
         .CLK        (CLK),
         .reset      (reset),

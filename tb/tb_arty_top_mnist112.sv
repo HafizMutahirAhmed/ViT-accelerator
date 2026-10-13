@@ -16,10 +16,10 @@
 // and lights the error LED until CLEAR, and that the busy and done LEDs
 // follow the run.
 //
-// The whole program through the byte stream is tb_host_link; over the UART
+// The whole program through the byte stream is tb_host_link_mnist112; over the UART
 // model it would take about 86 million clocks.
 //
-// Vectors: golden/gen_mnist_forward.py, in golden/vectors/mnist112. Reset is
+// Vectors: python/gen_mnist_forward.py, in python/vectors/mnist112. Reset is
 // the board's RESET button, ck_rst, pressed (low) at the start.
 //
 // sim.sh: also compile ../boards/arty_a7/uart_rx.sv
@@ -27,8 +27,8 @@
 // sim.sh: also compile ../boards/arty_a7/arty_top.sv
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_arty_top #(
-    parameter string VECTOR_DIR = "../golden/vectors/mnist112/"
+module tb_arty_top_mnist112 #(
+    parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
 );
 
     localparam int CLOCKS_PER_BIT = 8;
@@ -386,7 +386,7 @@ module tb_arty_top #(
         int cycles;
         string layout;
 
-        $display("tb_arty_top: UART model at %0d clocks per bit", CLOCKS_PER_BIT);
+        $display("tb_arty_top_mnist112: UART model at %0d clocks per bit", CLOCKS_PER_BIT);
         ck_rst = 1'b0;
         repeat (5) @(negedge CLK);
         ck_rst = 1'b1;

@@ -4,11 +4,11 @@
 # Usage: scripts/gen_vectors.sh
 #
 # 1. scripts/fetch_images.sh           calibration and held-out images
-# 2. golden/gen_vectors.py             synthetic vectors, golden/vectors/*.hex (in the repo)
-# 3. golden/gen_deit_forward.py        golden/vectors/deit/ and golden/vectors/deit_forward/
+# 2. python/gen_vectors.py             synthetic vectors, python/vectors/*.hex (in the repo)
+# 3. python/gen_deit_forward.py        python/vectors/deit/ and python/vectors/deit_forward/
 #                                      (not in the repo), and the accuracy report
-# 4. golden/gen_mnist_forward.py       golden/vectors/mnist112/ (not in the repo) and
-#                                      rtl/rom/mnist112/; downloads MNIST to golden/mnist/
+# 4. python/gen_mnist_forward.py       python/vectors/mnist112/ (not in the repo) and
+#                                      rtl/rom/mnist112/; downloads MNIST to python/mnist/
 #
 # Step 3 needs torch and timm in .venv:
 #   python3 -m venv --system-site-packages .venv && .venv/bin/pip install torch torchvision timm
@@ -16,10 +16,10 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 "$root/scripts/fetch_images.sh"
-python3 "$root/golden/gen_vectors.py"
-"$root/.venv/bin/python" "$root/golden/gen_deit_forward.py"
-# the 112 x 112 MNIST configuration; its probe, host/probe_mnist112.npz, is in the repo
-# (host/train_probe.py trains it again)
-"$root/.venv/bin/python" "$root/golden/gen_mnist_forward.py"
-# the bytes host/run_image.py exchanges with the board for the test digit, for tb_host_replay
-python3 "$root/host/run_image.py" --model --digit 0 --golden --clear --record
+python3 "$root/python/gen_vectors.py"
+"$root/.venv/bin/python" "$root/python/gen_deit_forward.py"
+# the 112 x 112 MNIST configuration; its probe, python/probe_mnist112.npz, is in the repo
+# (python/train_probe.py trains it again)
+"$root/.venv/bin/python" "$root/python/gen_mnist_forward.py"
+# the bytes python/run_image.py exchanges with the board for the test digit, for tb_host_replay_mnist112
+python3 "$root/python/run_image.py" --model --digit 0 --golden --clear --record

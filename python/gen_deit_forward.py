@@ -1,12 +1,12 @@
 """Golden model of the 2-layer DeiT-Tiny forward pass in integer arithmetic.
 
-Usage: .venv/bin/python golden/gen_deit_forward.py [--no-dump | --dump-only]   (needs torch and timm)
+Usage: .venv/bin/python python/gen_deit_forward.py [--no-dump | --dump-only]   (needs torch and timm)
        --dump-only writes the vectors without the accuracy report
-Images: golden/images_calibration/ and golden/images_heldout/ come from
-scripts/fetch_images.sh; golden/images/ is in the repo.
-Output, for the test image (the first one of golden/images/):
-  golden/vectors/deit/           the 39 matmuls of the pass, for tb_matmul_engine_deit
-  golden/vectors/deit_forward/   every stage, the tables and the constants
+Images: python/images_calibration/ and python/images_heldout/ come from
+scripts/fetch_images.sh; python/images/ is in the repo.
+Output, for the test image (the first one of python/images/):
+  python/vectors/deit/           the 39 matmuls of the pass, for tb_matmul_engine_deit224
+  python/vectors/deit_forward/   every stage, the tables and the constants
   rtl/rom/                       the ROM images of the tables (in the repo)
 
 The pass is the real pretrained model, layers 0 and 1: patch embedding, class
@@ -61,11 +61,11 @@ CALIBRATION_DIR = os.path.join(GOLDEN_DIR, "images_calibration")
 HELDOUT_DIR = os.path.join(GOLDEN_DIR, "images_heldout")
 MATMUL_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit")
 FORWARD_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit_forward")
-ROM_DIR = os.path.join(os.path.dirname(GOLDEN_DIR), "rtl", "rom")   # ROM images, kept in the repo
+ROM_DIR = os.path.join(os.path.dirname(GOLDEN_DIR), "rtl", "rom", "deit224")   # ROM images, kept in the repo
 
 CALIBRATION_MIN, HELDOUT_MIN = 128, 32
 SYS_ROW = SYS_COL = 8
-BANK_DEPTH = PARAMS["BANK_DEPTH_MAX"]  # tb_matmul_engine_deit gives every pool buffer this depth
+BANK_DEPTH = PARAMS["BANK_DEPTH_MAX"]  # tb_matmul_engine_deit224 gives every pool buffer this depth
 ROW_SELECT, COLUMN_SELECT = PARAMS["DRAIN_ROW_SELECT"], PARAMS["DRAIN_COLUMN_SELECT"]
 
 # precision of the non-linear ops
@@ -510,7 +510,7 @@ class Evaluation:
 
 
 def dump(parameters, fp, test_name, forward_dir=None, matmul_dir=None, rom_dir=None, plan=None):
-    """The test image: the engine ops for tb_matmul_engine_deit and every stage of the pass.
+    """The test image: the engine ops for tb_matmul_engine_deit224 and every stage of the pass.
 
     The directories default to the 224 x 224 model's. matmul_dir=False skips the per-matmul vectors.
     plan is the layer_program.Plan of the descriptor program.
@@ -527,7 +527,7 @@ def dump(parameters, fp, test_name, forward_dir=None, matmul_dir=None, rom_dir=N
 
     written = set()
     if MATMUL_DIR:
-        # golden/vectors/deit: one line per op in deit_ops.txt, name, group, A file, B file, bias file, Y file,
+        # python/vectors/deit: one line per op in deit_ops.txt, name, group, A file, B file, bias file, Y file,
         # descriptor file. A, B, Y are INT8 row-major, bias is INT32 per column.
         fresh(MATMUL_DIR)
         with open(os.path.join(MATMUL_DIR, "deit_ops.txt"), "w") as manifest:
@@ -559,7 +559,7 @@ def dump(parameters, fp, test_name, forward_dir=None, matmul_dir=None, rom_dir=N
                 manifest.write(f"{name} {op['group']} {a_file} {name}_B.hex {bias_file} {name}_Y.hex "
                                f"{name}_desc_r{SYS_ROW}c{SYS_COL}.hex\n")
 
-    # golden/vectors/deit_forward: every stage, the tables and the constants
+    # python/vectors/deit_forward: every stage, the tables and the constants
     fresh(FORWARD_DIR)
 
     def write(name, values, width):

@@ -1,9 +1,9 @@
 # Host protocol
 
-`host_link` (`rtl/host_link.sv`) connects a byte stream to the host port of
+`host_link` (`rtl/interface/host_link.sv`) connects a byte stream to the host port of
 `matmul_engine`. The byte stream is all a board has to provide: a UART on the
 Arty A7 (`boards/arty_a7/`), FrontPanel pipes on the XEM7310 later. The
-engine, `host_link` and the host software (`host/`) are the same on every
+engine, `host_link` and the host software (`python/`) are the same on every
 board.
 
 The host sends a command packet and waits for the response before it sends
@@ -82,7 +82,7 @@ string `123456789` is `0x29B1`.
 ## Running a program
 
 The descriptor program, the images and their addresses are the files
-`golden/layer_program.py` writes (`program_desc.hex`, `program_phases.txt`,
+`python/layer_program.py` writes (`program_desc.hex`, `program_phases.txt`,
 `program_loads.txt`, `*_image.hex`). For one image:
 
 1. `WRITE_DESCRIPTOR` the whole table (once per power-up).
@@ -94,7 +94,7 @@ The descriptor program, the images and their addresses are the files
 3. `READ_BUFFER` the classifier scores.
 
 Between two phases every buffer can be read with `READ_BUFFER`, which is how
-`host/run_image.py --check` compares the stages on the board with the golden
+`python/run_image.py --check` compares the stages on the board with the golden
 tensors.
 
 ## UART (Arty A7)

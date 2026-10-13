@@ -11,7 +11,7 @@
 //     edge, and the gaps left by a padded output_stride) must still hold the
 //     fill pattern, so nothing outside the matrix was written.
 //
-// Vectors come from golden/gen_vectors.py:
+// Vectors come from python/gen_vectors.py:
 //   <case>_cfg.hex   32-bit words: M, K, N, scale, shift
 //   <case>_A.hex     M*K  INT8   A[row][k]
 //   <case>_B.hex     K*N  INT8   B[k][col]
@@ -24,7 +24,7 @@
 module tb_matmul_engine #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../golden/vectors/"
+    parameter string VECTOR_DIR = "../../python/vectors/"
 );
 
     import vit_config_pkg::descriptor_t;
@@ -46,7 +46,7 @@ module tb_matmul_engine #(
 
     localparam int LANES = (SYS_ROW > SYS_COL) ? SYS_ROW : SYS_COL;
 
-    // must match ENGINE_TB_BANK_DEPTH in golden/gen_vectors.py
+    // must match ENGINE_TB_BANK_DEPTH in python/gen_vectors.py
     localparam int BUFFER_DEPTH = 16384;
 
     localparam int CASE_COUNT       = 6;  // mm_small, mm_ragged, mm_k1, mm_k2, mm_qkv, mm_nobias

@@ -4,7 +4,7 @@
 # Usage: vivado -mode batch -source scripts/synth_fit.tcl [-tclargs <part>]
 #
 # The part defaults to the Arty A7-100T's, xc7a100tcsg324-1. The pool depths are
-# the plan of golden/layer_program.py for 50 tokens and a 16,384-word weight
+# the plan of python/layer_program.py for 50 tokens and a 16,384-word weight
 # buffer (program_plan.txt), the ROM images are rtl/rom/mnist112. Reports go to
 # sim/synth_fit/ (gitignored): utilization.rpt, utilization_hier.rpt.
 
@@ -47,15 +47,15 @@ module engine_mnist112_fit (
         .SYS_ROW        (8),
         .SYS_COL        (8),
         .BUFFER_DEPTH   ({32'd16, 32'd1344, 32'd2544, 32'd1050, 32'd1344, 32'd5376, 32'd16384, 32'd1344}),
-        .GELU_ROM_FILE  ("rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
     ) engine (.*);
 endmodule
 }
 close $fh
 
-set rtl_dir [file join $repo_dir rtl]
+set rtl_dir [file join $repo_dir rtl core]
 set package [file join $rtl_dir vit_config_pkg.sv]
 set others {}
 foreach f [lsort [glob -directory $rtl_dir *.sv]] {

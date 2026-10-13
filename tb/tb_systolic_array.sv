@@ -6,7 +6,7 @@
 // with first_k_in high on slice 0, then zeros for PIPELINE_LATENCY cycles, and
 // compares every accumulator with the INT32 golden A @ B.
 //
-// Vectors come from golden/gen_vectors.py:
+// Vectors come from python/gen_vectors.py:
 //   tile_r<SYS_ROW>c<SYS_COL>_k<K>_A.hex      SYS_ROW*K  INT8   A[row][k]
 //   tile_r<SYS_ROW>c<SYS_COL>_k<K>_B.hex      K*SYS_COL  INT8   B[k][col]
 //   tile_r<SYS_ROW>c<SYS_COL>_k<K>_C_acc.hex  SYS_ROW*SYS_COL INT32
@@ -19,7 +19,7 @@
 module tb_systolic_array #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../golden/vectors/"
+    parameter string VECTOR_DIR = "../../python/vectors/"
 );
 
     localparam int DATA_WIDTH = vit_config_pkg::DATA_WIDTH;

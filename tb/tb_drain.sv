@@ -11,7 +11,7 @@
 //     every entry must be written exactly once;
 //   - the output buffer is read back through its read port and compared.
 //
-// Vectors come from golden/gen_vectors.py:
+// Vectors come from python/gen_vectors.py:
 //   <case>_cfg.hex   32-bit words: M, K, N, scale, shift
 //   <case>_A.hex     M*K  INT8   A[row][k]
 //   <case>_B.hex     K*N  INT8   B[k][col]
@@ -25,7 +25,7 @@
 module tb_drain #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../golden/vectors/"
+    parameter string VECTOR_DIR = "../../python/vectors/"
 );
 
     import vit_config_pkg::DRAIN_ROW_SELECT;

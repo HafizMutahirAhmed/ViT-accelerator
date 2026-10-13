@@ -10,7 +10,7 @@
 
 set script_dir [file dirname [file normalize [info script]]]
 set repo_dir   [file dirname $script_dir]
-set rtl_dir    [file join $repo_dir rtl]
+set rtl_dir    [file join $repo_dir rtl core]
 
 set opened_here 0
 if {[catch {current_project}]} {

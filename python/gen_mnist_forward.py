@@ -1,8 +1,8 @@
 """Golden vectors of the 112 x 112 MNIST configuration (50 tokens).
 
-Usage: .venv/bin/python golden/gen_mnist_forward.py [--dump-only]   (needs torch, timm, torchvision)
-Before it: .venv/bin/python host/train_probe.py, which writes host/probe_mnist112.npz.
-Output: golden/vectors/mnist112/ (every stage, the descriptor program, the host
+Usage: .venv/bin/python python/gen_mnist_forward.py [--dump-only]   (needs torch, timm, torchvision)
+Before it: .venv/bin/python python/train_probe.py, which writes python/probe_mnist112.npz.
+Output: python/vectors/mnist112/ (every stage, the descriptor program, the host
 load images) and rtl/rom/mnist112/ (the ROM images of this configuration).
 
 The integer model is gen_deit_forward.py's, unchanged; mnist_config.py holds
@@ -74,7 +74,7 @@ def main():
     label = int(test_set.targets[config.TEST_IMAGE])
     print(f"test digit {config.TEST_IMAGE}: label {label}, mean-of-patch-rows answer "
           f"{int(np.argmax(scores['head_mean'][1:].sum(0)))}, class-row answer {int(np.argmax(scores['head_class'][0]))}")
-    # what host/run_image.py needs besides the program files
+    # what python/run_image.py needs besides the program files
     with open(os.path.join(config.VEC_DIR, "host_config.json"), "w") as f:
         json.dump({"size": config.preprocess.SIZE, "tokens": config.TOKENS,
                    "input_scale": parameters.target["embed_in"],

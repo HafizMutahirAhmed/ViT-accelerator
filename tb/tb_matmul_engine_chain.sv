@@ -18,7 +18,7 @@
 // file. Words of an output region outside the result must keep the pattern.
 // It also reports the cycles each op took.
 //
-// Vectors come from golden/gen_vectors.py:
+// Vectors come from python/gen_vectors.py:
 //   attn_cfg.hex    32-bit words: tokens, embed, head dimension, weight columns
 //   attn_X.hex      INT8   X[token][k]
 //   attn_W.hex      INT8   W[k][col]
@@ -31,7 +31,7 @@
 module tb_matmul_engine_chain #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../golden/vectors/"
+    parameter string VECTOR_DIR = "../../python/vectors/"
 );
 
     import vit_config_pkg::descriptor_t;

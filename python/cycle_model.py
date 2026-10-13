@@ -1,8 +1,8 @@
-"""Cycle model of matmul_engine, checked against a tb_matmul_engine_deit log.
+"""Cycle model of matmul_engine, checked against a tb_matmul_engine_deit224 log.
 
-Usage: python3 golden/cycle_model.py [sim/sim_matmul_engine_deit.log]
-       python3 golden/cycle_model.py --program [sim/sim_encoder_program.log [vector directory name]]
-       --program models the whole descriptor program of golden/layer_program.py,
+Usage: python3 python/cycle_model.py [sim/sim_matmul_engine_deit.log]
+       python3 python/cycle_model.py --program [sim/sim_encoder_program.log [vector directory name]]
+       --program models the whole descriptor program of python/layer_program.py,
        entry by entry, and checks it against a tb_encoder_program log.
 
 For one op on an S_ROW x S_COL array:
@@ -15,8 +15,8 @@ For one op on an S_ROW x S_COL array:
                                        S_COL in column-select
            + 2 + REQUANTIZE_LATENCY    drain pipeline
            + POOL_WRITE_LATENCY        pool write register
-The latencies come from rtl/vit_config_pkg.sv. The ops are the real DeiT-Tiny
-ops listed in golden/vectors/deit/deit_ops.txt.
+The latencies come from rtl/core/vit_config_pkg.sv. The ops are the real DeiT-Tiny
+ops listed in python/vectors/deit/deit_ops.txt.
 
 The non-linear ops (residual add, GELU, LayerNorm, softmax) are row ops of the
 engine: SYS_ROW rows are processed together and each pass over a row tile

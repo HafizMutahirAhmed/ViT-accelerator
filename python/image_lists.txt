@@ -1,7 +1,7 @@
 # Extra ImageNet sample images, one per class, from
 # https://github.com/EliSchwartz/imagenet-sample-images (fetched by scripts/fetch_images.sh).
 # calibration: the activation scales come from these. heldout: evaluation only, together
-# with the 17 images in golden/images/. The sets are disjoint.
+# with the 17 images in python/images/. The sets are disjoint.
 calibration n01440764_tench.JPEG
 calibration n01498041_stingray.JPEG
 calibration n01534433_junco.JPEG

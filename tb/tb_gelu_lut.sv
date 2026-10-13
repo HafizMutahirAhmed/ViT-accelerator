@@ -6,9 +6,9 @@
 // The input is streamed the way the engine does it, LANES rows per cycle, row
 // tile by row tile, with valid_in dropping now and then, and every valid
 // output is compared with the golden INT8 tensor. The ROM is the one the
-// design uses, rtl/rom/gelu_rom.hex.
+// design uses, rtl/rom/deit224/gelu_rom.hex.
 //
-// Vectors come from golden/gen_deit_forward.py, in golden/vectors/deit_forward:
+// Vectors come from python/gen_deit_forward.py, in python/vectors/deit_forward:
 //   nonlinear_ops.txt  one line per op: name, kind, x file, "-", y file,
 //                      descriptor file, "-", "-"
 //   x, y               INT8 rows x cols, row-major
@@ -17,7 +17,7 @@
 
 module tb_gelu_lut #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../golden/vectors/deit_forward/"
+    parameter string VECTOR_DIR = "../../python/vectors/deit_forward/"
 );
 
     import vit_config_pkg::descriptor_t;

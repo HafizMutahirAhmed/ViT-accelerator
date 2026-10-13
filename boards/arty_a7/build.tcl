@@ -4,7 +4,7 @@
 #   <stop> is "route" to stop before the bitstream; the default writes it.
 #
 # Non-project flow for the Arty A7-100T (xc7a100tcsg324-1). Sources: every
-# rtl/*.sv and the SystemVerilog files of this directory; constraints:
+# rtl/core/*.sv and rtl/interface/*.sv and the SystemVerilog files of this directory; constraints:
 # arty_top.xdc. Everything goes to sim/arty_a7_build/ (gitignored):
 #   arty_top.bit                 the bitstream
 #   timing_summary.rpt, timing_worst10.rpt
@@ -21,11 +21,14 @@ if {[llength $argv] > 0} {
     set stop [lindex $argv 0]
 }
 
-set rtl_dir [file join $repo_dir rtl]
+set rtl_dir [file join $repo_dir rtl core]
 set package [file join $rtl_dir vit_config_pkg.sv]
 set sources [list $package]
 foreach f [lsort [glob -directory $rtl_dir *.sv]] {
     if {$f ne $package} { lappend sources $f }
+}
+foreach f [lsort [glob -directory [file join $repo_dir rtl interface] *.sv]] {
+    lappend sources $f
 }
 foreach f [lsort [glob -directory $board_dir *.sv]] {
     lappend sources $f
