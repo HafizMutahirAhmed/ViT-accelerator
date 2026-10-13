@@ -3,7 +3,7 @@
 # Usage: vivado -mode batch -source scripts/ooc_matmul_engine.tcl
 #        vivado -mode batch -source scripts/ooc_matmul_engine.tcl -tclargs <clock period ns> <array size>
 #
-# The part comes from ViT-implementation.xpr. The array is square, 8x8 unless
+# The part is the XEM7310-A200's, xc7a200tfbg484-1. The array is square, 8x8 unless
 # an array size is given; everything else is the package default. The pool
 # buffer depths are the real build's (buffer_depths below). Reports and the
 # routed checkpoint go to sim/ooc_matmul_engine/, or
@@ -31,9 +31,7 @@ if {$size != 8} {
 }
 file mkdir $out_dir
 
-set fh [open [file join $repo_dir ViT-implementation.xpr]]
-regexp {Option Name="Part" Val="([^"]+)"} [read $fh] -> part
-close $fh
+set part xc7a200tfbg484-1
 puts "ooc_matmul_engine: part $part, clock period $period ns, ${size}x${size} array"
 
 # Words per bank of pool buffers 0..7: the plan of python/layer_program.py,

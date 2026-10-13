@@ -1,7 +1,27 @@
-# Extra ImageNet sample images, one per class, from
+# ImageNet sample images, one per class, from
 # https://github.com/EliSchwartz/imagenet-sample-images (fetched by scripts/fetch_images.sh).
-# calibration: the activation scales come from these. heldout: evaluation only, together
-# with the 17 images in python/images/. The sets are disjoint.
+# test: python/images/, the first one is the image the vectors are made from; all
+#   of them are evaluation images.
+# calibration: python/images_calibration/, the activation scales come from these.
+# heldout: python/images_heldout/, evaluation only, together with the test images.
+# The three sets are disjoint.
+test n01514668_cock.JPEG
+test n01755581_diamondback.JPEG
+test n02002556_white_stork.JPEG
+test n02094433_Yorkshire_terrier.JPEG
+test n02109525_Saint_Bernard.JPEG
+test n02177972_weevil.JPEG
+test n02481823_chimpanzee.JPEG
+test n02795169_barrel.JPEG
+test n02992529_cellular_telephone.JPEG
+test n03272562_electric_locomotive.JPEG
+test n03590841_jack-o'-lantern.JPEG
+test n03787032_mortarboard.JPEG
+test n03956157_planetarium.JPEG
+test n04192698_shield.JPEG
+test n04389033_tank.JPEG
+test n04591713_wine_bottle.JPEG
+test n07920052_espresso.JPEG
 calibration n01440764_tench.JPEG
 calibration n01498041_stingray.JPEG
 calibration n01534433_junco.JPEG

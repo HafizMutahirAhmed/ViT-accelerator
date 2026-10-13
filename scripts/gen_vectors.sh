@@ -4,7 +4,7 @@
 # Usage: scripts/gen_vectors.sh
 #
 # 1. scripts/fetch_images.sh           calibration and held-out images
-# 2. python/gen_vectors.py             synthetic vectors, python/vectors/*.hex (in the repo)
+# 2. python/gen_vectors.py             synthetic vectors, python/vectors/*.hex
 # 3. python/gen_deit_forward.py        python/vectors/deit/ and python/vectors/deit_forward/
 #                                      (not in the repo), and the accuracy report
 # 4. python/gen_mnist_forward.py       python/vectors/mnist112/ (not in the repo) and

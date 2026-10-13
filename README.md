@@ -19,7 +19,6 @@ built yet.
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
 - [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md): the byte protocol between host and board
 - [docs/AXI_REGISTER_MAP.md](docs/AXI_REGISTER_MAP.md): the AXI wrapper
-- [docs/SCHEDULE.md](docs/SCHEDULE.md): schedule
 
 ## What is frozen and what is meant to change
 
@@ -41,10 +40,9 @@ built yet.
 | `tb/` | Every testbench, `tb_<name>.sv`. Each reads golden vectors and prints PASS or FAIL. |
 | `boards/arty_a7/` | Digilent Arty A7-100T: top level, UART, constraints, build script. |
 | `boards/opal_kelly/` | Opal Kelly XEM7310-A200: a stub for now. |
-| `python/` | Reference models, generators and host software; vectors in `python/vectors/`. |
+| `python/` | Reference models, generators and host software. Vectors and images land in `python/vectors/`, `python/images*/` and `python/mnist/`, none of them tracked. |
 | `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them), `gen_vectors.sh`, Vivado Tcl scripts. |
-| `docs/` | Spec, engine description, host protocol, schedule. |
-| `legacy/` | Files from the earlier weight-stationary design, not used. |
+| `docs/` | Spec, engine description, host protocol, AXI register map. |
 
 Simulation and build output goes to `sim/`, which is not tracked.
 
@@ -75,9 +73,8 @@ Simulation and build output goes to `sim/`, which is not tracked.
 
 ### Known limitations
 
-- **`ViT-implementation.xpr` is obsolete.** It lists the sources at their old
-  paths. Nothing here uses it: simulation goes through `scripts/sim.sh` and
-  builds through the Tcl scripts.
+- **There is no Vivado project file.** Simulation goes through
+  `scripts/sim.sh` and builds through the Tcl scripts, in non-project mode.
 - **The engine's default ROM images are the DeiT-224 tables.**
   `matmul_engine` defaults to `rom/gelu_rom.hex`, `rom/exp_rom.hex` and
   `rom/rsqrt_rom.hex`, named relative to its own directory. `rtl/core/rom` is
@@ -93,7 +90,7 @@ Simulation and build output goes to `sim/`, which is not tracked.
 ## Running the tests
 
 The tests need Vivado xsim on the `PATH` (developed with Vivado 2022.2) and the
-vectors that are not kept in the repo (see the next section). From the
+vectors, none of which are kept in the repo (see "Generating the vectors"). From the
 repository root:
 
 ```sh
@@ -134,8 +131,8 @@ python3 python/run_image.py --model --digit 0 --golden   # no board: the softwar
 
 | Step | Writes | In the repo |
 |---|---|---|
-| `scripts/fetch_images.sh` | `python/images_calibration/` (128 images), `python/images_heldout/` (25 images) | no, only the list `python/image_lists.txt` |
-| `python3 python/gen_vectors.py` | synthetic vectors, `python/vectors/*.hex` | yes |
+| `scripts/fetch_images.sh` | `python/images/` (17 images), `python/images_calibration/` (128), `python/images_heldout/` (25) | no, only the list `python/image_lists.txt` |
+| `python3 python/gen_vectors.py` | synthetic vectors, `python/vectors/*.hex` | no |
 | `.venv/bin/python python/gen_deit_forward.py` | `python/vectors/deit/`, `python/vectors/deit_forward/`, `rtl/rom/deit224/` | vectors no, ROM images yes |
 | `.venv/bin/python python/gen_mnist_forward.py` | `python/vectors/mnist112/`, `rtl/rom/mnist112/` | vectors no, ROM images yes |
 | `python3 python/run_image.py --model ... --record` | the host byte stream for `tb_host_replay_mnist112` | no |

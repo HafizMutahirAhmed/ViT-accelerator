@@ -17,12 +17,11 @@ xsim.dir/
 *.wdb
 *.pb
 
-# Golden vectors and images that scripts/gen_vectors.sh regenerates
-python/vectors/deit/
-python/vectors/deit_forward/
+# Vectors and images: scripts/gen_vectors.sh regenerates all of them
+python/vectors/
+python/images/
 python/images_calibration/
 python/images_heldout/
-python/vectors/mnist112/
 python/mnist/
 
 # Python
