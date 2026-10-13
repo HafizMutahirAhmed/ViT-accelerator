@@ -19,6 +19,7 @@ built yet.
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
 - [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md): the byte protocol between host and board
 - [docs/AXI_REGISTER_MAP.md](docs/AXI_REGISTER_MAP.md): the AXI wrapper
+- [docs/ARTY_QUICKSTART.md](docs/ARTY_QUICKSTART.md): from a clone to a digit on the Arty A7
 
 ## What is frozen and what is meant to change
 
@@ -38,13 +39,13 @@ built yet.
 | `rtl/interface/` | Host protocol on a byte stream, AXI wrapper and bridge. |
 | `rtl/rom/deit224/`, `rtl/rom/mnist112/` | GELU, exp and reciprocal-square-root table images of the two configurations. |
 | `tb/` | Every testbench, `tb_<name>.sv`. Each reads golden vectors and prints PASS or FAIL. |
-| `boards/arty_a7/` | Digilent Arty A7-100T: top level, UART, constraints, build script. |
+| `boards/arty_a7/` | Digilent Arty A7-100T: top levels, UART, constraints. |
 | `boards/opal_kelly/` | Opal Kelly XEM7310-A200: a stub for now. |
 | `python/` | Reference models, generators and host software. Vectors and images land in `python/vectors/`, `python/images*/` and `python/mnist/`, none of them tracked. |
-| `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them), `gen_vectors.sh`, Vivado Tcl scripts. |
+| `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them), `gen_vectors.sh`, and the Vivado Tcl scripts: the Arty project and bitstream, the engine alone out of context. |
 | `docs/` | Spec, engine description, host protocol, AXI register map. |
 
-Simulation and build output goes to `sim/`, which is not tracked.
+Simulation output goes to `sim/` and Vivado projects and bitstreams to `build/`; neither is tracked.
 
 ### Python scripts
 
@@ -73,8 +74,8 @@ Simulation and build output goes to `sim/`, which is not tracked.
 
 ### Known limitations
 
-- **There is no Vivado project file.** Simulation goes through
-  `scripts/sim.sh` and builds through the Tcl scripts, in non-project mode.
+- **No Vivado project is tracked.** `scripts/create_arty_project.tcl` creates
+  one in `build/` from the sources here.
 - **The engine's default ROM images are the DeiT-224 tables.**
   `matmul_engine` defaults to `rom/gelu_rom.hex`, `rom/exp_rom.hex` and
   `rom/rsqrt_rom.hex`, named relative to its own directory. `rtl/core/rom` is
@@ -114,16 +115,21 @@ scripts/sim.sh systolic_array SYS_ROW=4 SYS_COL=4
 
 The first board is a Digilent Arty A7-100T, with a reduced configuration that
 fits it: a 112 x 112 input (50 tokens), MNIST digits, weights sent per group
-of matmuls over the USB-UART. See [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md).
+of matmuls over the USB-UART. **[docs/ARTY_QUICKSTART.md](docs/ARTY_QUICKSTART.md)
+goes through it step by step.** In short:
 
 ```sh
-vivado -mode batch -source boards/arty_a7/build.tcl      # sim/arty_a7_build/arty_top.bit
-python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --check
-python3 python/run_image.py --model --digit 0 --golden   # no board: the software model
+scripts/gen_vectors.sh
+vivado -mode batch -source scripts/create_arty_project.tcl     # build/arty_a7_project/arty_a7.xpr
+vivado -mode batch -source scripts/build_arty_bitstream.tcl    # build/arty_top_axi.bit and the numbers
+python3 python/run_image.py --port /dev/ttyUSB1 --ping
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 0
+python3 python/run_image.py --model --digit 0 --golden         # no board: the software model
 ```
 
-`run_image.py` needs the program files of `scripts/gen_vectors.sh`
-(`python/vectors/mnist112/`), numpy, Pillow and pyserial.
+Both Tcl scripts also run from the Vivado GUI (Tools > Run Tcl Script). The
+pin assignments come from Digilent's master XDC and were not checked against
+the Arty reference manual; see the quick start.
 
 ## Generating the vectors
 
@@ -146,6 +152,12 @@ python3 -m venv --system-site-packages .venv
 ```
 
 The first run downloads the DeiT-Tiny weights and MNIST (to `python/mnist/`).
-`gen_deit_forward.py` takes its scales from the calibration images and prints
-the error against FP32 for the calibration images and for the held-out images
-separately.
+
+The generators are deterministic: one thread, fixed seeds, and the tensor
+scales read from `python/scales_deit224.json` and `python/scales_mnist112.json`,
+which are in the repo. Two runs give byte-identical vectors and the ROM images
+that are committed. `gen_vectors.sh` writes the vectors only; run a generator
+without `--dump-only` for its accuracy report against FP32 (calibration and
+held-out images separately), and with `--recalibrate` to work the scales out
+again. A recalibration can change the ROM images, and then the bitstream has
+to be rebuilt.
