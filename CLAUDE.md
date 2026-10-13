@@ -1,40 +1,44 @@
-# DeiT-Tiny FPGA accelerator (Opal Kelly XEM7310-A200, XC7A200T)
+# DeiT-Tiny FPGA accelerator
 
-Deadline: Nov 2, 2026. Project restarted from scratch Oct 11. Full spec, architecture, schedule and open decisions: @docs/SPEC.md (source of truth; tell me if a request conflicts with it).
-
-## Key facts
-- 2 of 12 DeiT-Tiny layers, real pretrained weights, 197 tokens, embed 192, INT8 everywhere (INT32 accumulate).
-- Output-stationary systolic array, fed from DDR3 (MIG/AXI4) via DMA + BRAM ping-pong tile buffers. Never feed the SA directly from DDR.
-- Single main clock domain (MIG ui_clk); only CDC is FrontPanel okClk <-> ui_clk.
-- Requantizer: out = clip((acc*scale)>>>shift) to int8; DATA_WIDTH=8, ACC_WIDTH=32, SHIFT_WIDTH=$clog2(ACC_WIDTH), SCALE_WIDTH=8.
-- Standard fixed-point softmax, LUT GELU, fixed-point LayerNorm.
-- Host comms: Opal Kelly FrontPanel. AXI4 only for DDR3.
+Two encoder layers of the pretrained DeiT-Tiny, INT8, bit-exact against an integer golden model.
+Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 
 ## Layout
-This folder (ViT-implementation) is an existing Vivado project. Add these next to the .xpr as needed:
-- rtl/      synthesizable SystemVerilog, one module per file (new RTL goes here)
-- tb/       self-checking testbenches (tb_<module>.sv)
-- golden/   Python golden model; dumps per-stage INT8 tensors as .hex into golden/vectors/
-- scripts/  sim.sh (xsim runner), build.tcl, helper scripts
-- sim/      simulation outputs (gitignored)
-- docs/     SPEC.md
+- rtl/core/       the engine and the non-linear units. FROZEN: do not change it unless I ask.
+- rtl/interface/  host protocol, AXI wrapper and bridge.
+- rtl/rom/        table images per configuration (deit224, mnist112); generated, committed.
+- tb/             self-checking testbenches, tb_<name>.sv.
+- boards/         one directory per board: top level, transport, constraints.
+- python/         golden models, generators, host software.
+- scripts/        sim.sh, regress.sh, gen_vectors.sh, Vivado Tcl scripts.
+- docs/           SPEC, ENGINE, HOST_PROTOCOL, AXI_REGISTER_MAP, ARTY_QUICKSTART.
+- sim/, build/    simulation and build output, not tracked.
 
-Vivado-generated directories (*.srcs, *.runs, *.cache, *.gen, *.sim, *.hw, *.ip_user_files, *.jou, *.log) and the .xpr are managed by Vivado: never edit them by hand. Generated IP (e.g. MIG) stays where Vivado put it. Before changing anything in a new session, inventory what already exists and tell me.
+## Commands (Ubuntu; Vivado 2022.2 settings64.sh is sourced before claude starts)
+- Vectors (none are tracked): `scripts/gen_vectors.sh` (needs .venv with torch, timm, torchvision)
+- One testbench: `scripts/sim.sh <name> [PARAM=value ...]`, log in sim/sim_<name>.log
+- Regression: `scripts/regress.sh [jobs]`; about an hour, the DeiT-224 runs dominate
+- Arty project: `vivado -mode batch -source scripts/create_arty_project.tcl`
+- Arty bitstream: `vivado -mode batch -source scripts/build_arty_bitstream.tcl` (output in build/)
+- Engine alone on the XC7A200T: `vivado -mode batch -source scripts/ooc_matmul_engine.tcl`
+- Host: `python3 python/run_image.py --port <port> --ping`, then `--digit 0`; `--model` needs no board
+- Only `python3` is on the PATH; the generators that need torch run with `.venv/bin/python`
 
 ## Conventions
-- Synthesizable Verilog-2005/SV for Vivado; no `initial` in synth code; parameterize widths.
-- Every module gets a self-checking testbench reading golden .hex vectors; print PASS/FAIL + first mismatch index.
-- State fixed-point formats (Q-format, scale, shift) explicitly for every module; flag anything that risks bit-exactness vs the golden model.
-
-## Commands (Ubuntu; Vivado settings64.sh is sourced before claude starts)
-- Primary sim (Vivado xsim, headless): `xvlog -sv rtl/<mod>.sv tb/tb_<mod>.sv && xelab tb_<mod> -s sim_<mod> && xsim sim_<mod> -runall` (wrap in scripts/sim.sh <mod>; run from sim/)
-- Fast lint (optional): `verilator --lint-only -Wall -sv rtl/<mod>.sv`
-- Vivado batch (synth/impl/reports): `vivado -mode batch -source scripts/build.tcl`
-- Golden vectors: `python golden/gen_vectors.py`
-- Waveforms: I view them myself (GTKWave / Vivado). Debug via $display, assertions and PASS/FAIL output, not by reading waveforms.
-- MIG/DDR3 sims need Vivado xsim (Xilinx primitives); Verilator is only for pure-RTL lint/speed.
+- SystemVerilog for Vivado; parameterize widths; every parameter in rtl/core/vit_config_pkg.sv.
+- Descriptive names, no abbreviations (DATA_WIDTH, not DW).
+- Every module gets a self-checking testbench on golden vectors that prints PASS or FAIL with the
+  first mismatch index.
+- State fixed-point formats in every module header.
+- Tables are ROMs loaded with $readmemh from rtl/rom/.
+- Do not instantiate a vendor primitive without asking me.
 
 ## Working rules
 - Run the testbench after every RTL change; fix failures before moving on.
-- Don't dump full waveforms/logs into the conversation; grep for errors, mismatches, timing summary lines.
-- Never edit golden vectors to make a test pass.
+- Never edit golden vectors to make a test pass, and do not edit a testbench to make a test pass.
+- Do not commit generated files: vectors, images, sim/, build/, Vivado output.
+- The scale files python/scales_*.json and the ROM images are committed on purpose; change them
+  only with --recalibrate and say so.
+- Commit per step. Do not push; I push.
+- Do not dump full logs into the conversation; grep for errors, mismatches and timing lines.
+- Debug through $display and PASS/FAIL output, not waveforms.
