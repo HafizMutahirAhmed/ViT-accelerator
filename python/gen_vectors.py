@@ -48,6 +48,7 @@ Requantizer on its own, vector i is one (acc, scale, shift) -> out:
 
 import os
 
+import deterministic  # noqa: F401  (first: it sets the thread counts)
 import numpy as np
 
 from pkg_config import PARAMS, pack_descriptor

@@ -1,6 +1,9 @@
 """Golden vectors of the 112 x 112 MNIST configuration (50 tokens).
 
-Usage: .venv/bin/python python/gen_mnist_forward.py [--dump-only]   (needs torch, timm, torchvision)
+Usage: .venv/bin/python python/gen_mnist_forward.py [--dump-only] [--recalibrate]   (needs torch, timm, torchvision)
+       --recalibrate works the tensor scales out again from the calibration digits and rewrites
+       python/scales_mnist112.json; without it the scales are read from that file. After a
+       recalibration train the probe again (python/train_probe.py).
 Before it: .venv/bin/python python/train_probe.py, which writes python/probe_mnist112.npz.
 Output: python/vectors/mnist112/ (every stage, the descriptor program, the host
 load images) and rtl/rom/mnist112/ (the ROM images of this configuration).
@@ -16,6 +19,8 @@ The report compares every stage with FP32 on the calibration digits
 (in-sample) and on test digits (held-out).
 """
 
+import deterministic  # noqa: F401  (first: it sets the thread counts)
+
 import json
 import os
 import sys
@@ -28,9 +33,10 @@ import mnist_config as config
 
 
 def main():
+    deterministic.setup()
     model = config.load_model()
     train_set, test_set = config.datasets()
-    target = config.calibrate(model, train_set, golden.capture_all)
+    target = config.calibrate(model, train_set, golden.capture_all, golden.load_scales, "--recalibrate" in sys.argv)
     classifiers, scales = config.load_probe()
     parameters = golden.Model(model, dict(target, **scales), classifiers=classifiers)
 

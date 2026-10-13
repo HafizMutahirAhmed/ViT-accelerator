@@ -35,6 +35,7 @@ MNIST_DIR = os.path.join(GOLDEN_DIR, "mnist")
 VEC_DIR = os.path.join(GOLDEN_DIR, "vectors", NAME)
 ROM_DIR = os.path.join(REPO_DIR, "rtl", "rom", NAME)
 PROBE_FILE = os.path.join(GOLDEN_DIR, f"probe_{NAME}.npz")
+SCALES_FILE = os.path.join(GOLDEN_DIR, f"scales_{NAME}.json")
 
 CALIBRATION = range(0, 128)
 PROBE_TRAIN = range(128, 6128)
@@ -79,13 +80,20 @@ def integer_input(pixels):
     return {"embed_in": preprocess.im2col(preprocess.image_tensor(pixels))}
 
 
-def calibrate(model, train, capture_all):
-    """Scale of every tensor: its largest magnitude over the calibration digits / 127."""
-    largest = {}
-    for index in CALIBRATION:
-        for key, tensor in capture_digit(model, pixels_of(train, index), capture_all).items():
-            largest[key] = max(largest.get(key, 0.0), float(np.abs(tensor).max()))
-    return {key: value / DATA_MAX for key, value in largest.items()}
+def calibrate(model, train, capture_all, load_scales, recalibrate=False):
+    """Scale of every tensor: its largest magnitude over the calibration digits / 127.
+
+    The result is kept in the repo (SCALES_FILE) and read from there unless recalibrate is set.
+    load_scales is gen_deit_forward.load_scales.
+    """
+    def work_out():
+        largest = {}
+        for index in CALIBRATION:
+            for key, tensor in capture_digit(model, pixels_of(train, index), capture_all).items():
+                largest[key] = max(largest.get(key, 0.0), float(np.abs(tensor).max()))
+        return {key: value / DATA_MAX for key, value in largest.items()}
+
+    return load_scales(SCALES_FILE, recalibrate, work_out)
 
 
 def load_probe():

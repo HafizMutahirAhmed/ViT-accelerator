@@ -16,6 +16,8 @@ scale, INT32 bias, INT8 scores) and the accuracy is measured again with that
 integer arithmetic on test digits the training never saw.
 """
 
+import deterministic  # noqa: F401  (first: it sets the thread counts)
+
 import os
 import sys
 
@@ -69,10 +71,10 @@ def accuracy(scores, labels):
 
 
 def main():
-    torch.manual_seed(0)
+    deterministic.setup()
     model = config.load_model()
     train_set, test_set = config.datasets()
-    target = config.calibrate(model, train_set, golden.capture_all)
+    target = config.calibrate(model, train_set, golden.capture_all, golden.load_scales)
     parameters = golden.Model(model, target, classifiers=[], final_all_rows=True)
 
     # the integer pass over 8,000 digits takes a while: --reuse takes the features of the last run

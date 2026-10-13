@@ -1,7 +1,9 @@
 """Golden model of the 2-layer DeiT-Tiny forward pass in integer arithmetic.
 
-Usage: .venv/bin/python python/gen_deit_forward.py [--no-dump | --dump-only]   (needs torch and timm)
+Usage: .venv/bin/python python/gen_deit_forward.py [--no-dump | --dump-only] [--recalibrate]   (needs torch and timm)
        --dump-only writes the vectors without the accuracy report
+       --recalibrate works the tensor scales out again from the calibration images and
+       rewrites python/scales_deit224.json; without it the scales are read from that file
 Images: python/images_calibration/ and python/images_heldout/ come from
 scripts/fetch_images.sh; python/images/ is in the repo.
 Output, for the test image (the first one of python/images/):
@@ -40,7 +42,10 @@ The report is printed twice: for the calibration images (in-sample) and for
 images the calibration never saw (held-out).
 """
 
+import deterministic  # noqa: F401  (first: it sets the thread counts)
+
 import glob
+import json
 import os
 import sys
 
@@ -62,6 +67,7 @@ HELDOUT_DIR = os.path.join(GOLDEN_DIR, "images_heldout")
 MATMUL_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit")
 FORWARD_DIR = os.path.join(GOLDEN_DIR, "vectors", "deit_forward")
 ROM_DIR = os.path.join(os.path.dirname(GOLDEN_DIR), "rtl", "rom", "deit224")   # ROM images, kept in the repo
+SCALES_FILE = os.path.join(GOLDEN_DIR, "scales_deit224.json")             # calibration result, kept in the repo
 
 CALIBRATION_MIN, HELDOUT_MIN = 128, 32
 SYS_ROW = SYS_COL = 8
@@ -636,8 +642,21 @@ def dump(parameters, fp, test_name, forward_dir=None, matmul_dir=None, rom_dir=N
     return forward
 
 
+def load_scales(file_name, recalibrate, calibrate):
+    """The tensor scales of a configuration: read from the repo, or calibrated again and written there."""
+    if recalibrate or not os.path.exists(file_name):
+        scales = calibrate()
+        with open(file_name, "w") as f:
+            json.dump(dict(sorted(scales.items())), f, indent=1)
+            f.write("\n")
+        print(f"calibrated: wrote {len(scales)} scales to {os.path.relpath(file_name, os.path.dirname(GOLDEN_DIR))}")
+    with open(file_name) as f:
+        return json.load(f)
+
+
 def main():
-    torch.manual_seed(0)
+    deterministic.setup()
+    recalibrate, dump_only = "--recalibrate" in sys.argv, "--dump-only" in sys.argv
     model = timm.create_model(MODEL_NAME, pretrained=True).eval()
     for block in model.blocks:
         block.attn.fused_attn = False  # so the softmax output passes through attn_drop
@@ -648,19 +667,25 @@ def main():
         return [name for directory in directories for name in sorted(glob.glob(os.path.join(directory, "*.JPEG")))]
 
     calibration, heldout = images(CALIBRATION_DIR), images(IMAGE_DIR, HELDOUT_DIR)
-    assert len(calibration) >= CALIBRATION_MIN and len(heldout) >= HELDOUT_MIN, \
-        "images missing: run scripts/fetch_images.sh"
+    assert heldout, "images missing: run scripts/fetch_images.sh"
+    if recalibrate or not dump_only:
+        assert len(calibration) >= CALIBRATION_MIN and len(heldout) >= HELDOUT_MIN, \
+            "images missing: run scripts/fetch_images.sh"
     assert not {os.path.basename(f) for f in calibration} & {os.path.basename(f) for f in heldout}
 
     def label(file_name):
         return synsets.index(os.path.basename(file_name).split("_")[0])
 
-    # pass 1: the scale of a tensor is its largest magnitude over the calibration images / 127
-    largest = {}
-    for file_name in calibration:
-        for key, tensor in capture_all(model, load_image(file_name, cfg)).items():
-            largest[key] = max(largest.get(key, 0.0), float(np.abs(tensor).max()))
-    parameters = Model(model, {key: value / DATA_MAX for key, value in largest.items()})
+    # the scale of a tensor is its largest magnitude over the calibration images / 127. The result is
+    # kept in the repo (SCALES_FILE) and read from there; --recalibrate works it out again.
+    def calibrate():
+        largest = {}
+        for file_name in calibration:
+            for key, tensor in capture_all(model, load_image(file_name, cfg)).items():
+                largest[key] = max(largest.get(key, 0.0), float(np.abs(tensor).max()))
+        return {key: value / DATA_MAX for key, value in largest.items()}
+
+    parameters = Model(model, load_scales(SCALES_FILE, recalibrate, calibrate))
 
     fp = capture_all(model, load_image(heldout[0], cfg))
     assert np.allclose(fp["embed_out"] + parameters.addend_real(), fp["L0_x_in"], atol=1e-4)
@@ -671,7 +696,7 @@ def main():
     evaluations = {}
     sets = (("IN-SAMPLE (the calibration images)", calibration),
             ("HELD-OUT (never seen by the calibration)", heldout))
-    for title, files in (() if "--dump-only" in sys.argv else sets):
+    for title, files in (() if dump_only else sets):
         evaluation = Evaluation(parameters)
         for file_name in files:
             evaluation.add_image(capture_all(model, load_image(file_name, cfg)), label(file_name))
