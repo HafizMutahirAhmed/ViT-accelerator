@@ -17,6 +17,8 @@ built yet.
 
 - [docs/SPEC.md](docs/SPEC.md): project spec
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
+- [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md): the byte protocol between host and board
+- [docs/AXI_REGISTER_MAP.md](docs/AXI_REGISTER_MAP.md): the AXI wrapper
 - [docs/SCHEDULE.md](docs/SCHEDULE.md): schedule
 
 ## What is frozen and what is meant to change
