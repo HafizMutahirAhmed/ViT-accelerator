@@ -1,4 +1,4 @@
-## Constraints of boards/arty_a7/arty_top_axi.sv on the Digilent Nexys A7-100T.
+## Constraints of boards/nexys_a7/nexys_top_axi.sv on the Digilent Nexys A7-100T.
 ##
 ## Every constraint line below is a line of Digilent's Nexys-A7-100T-Master.xdc,
 ## uncommented, with only the port name in get_ports renamed to the top's port:

@@ -33,7 +33,7 @@ runs=(
     "encoder_program_mnist112"
     "host_link_mnist112"
     "host_replay_mnist112"
-    "arty_top_mnist112"
+    "nexys_top_mnist112"
     "axi_replay_mnist112"
 )
 

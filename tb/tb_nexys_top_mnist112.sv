@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Self-checking testbench for arty_top: the accelerator through the Arty's
-// pins, with a UART model on the serial lines.
+// Self-checking testbench for nexys_top_axi: the accelerator through the
+// Nexys A7's pins, with a UART model on the serial lines.
 //
 // The UART model sends and receives 8N1 frames at the bit time of the design
 // (BAUD_RATE is set so that one bit is 8 clocks, to keep the run short; the
@@ -20,14 +20,14 @@
 // model it would take about 86 million clocks.
 //
 // Vectors: python/gen_mnist_forward.py, in python/vectors/mnist112. Reset is
-// the board's RESET button, ck_rst, pressed (low) at the start.
+// the board's CPU_RESET button, ck_rst, pressed (low) at the start.
 //
-// sim.sh: also compile ../boards/arty_a7/uart_rx.sv
-// sim.sh: also compile ../boards/arty_a7/uart_tx.sv
-// sim.sh: also compile ../boards/arty_a7/arty_top.sv
+// sim.sh: also compile ../boards/nexys_a7/uart_rx.sv
+// sim.sh: also compile ../boards/nexys_a7/uart_tx.sv
+// sim.sh: also compile ../boards/nexys_a7/nexys_top_axi.sv
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_arty_top_mnist112 #(
+module tb_nexys_top_mnist112 #(
     parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
 );
 
@@ -66,7 +66,7 @@ module tb_arty_top_mnist112 #(
     logic       uart_rxd_out;
     logic [3:0] led;
 
-    arty_top #(
+    nexys_top_axi #(
         .CLOCK_HZ  (CLOCK_HZ),
         .BAUD_RATE (CLOCK_HZ / CLOCKS_PER_BIT)
     ) dut (
@@ -386,7 +386,7 @@ module tb_arty_top_mnist112 #(
         int cycles;
         string layout;
 
-        $display("tb_arty_top_mnist112: UART model at %0d clocks per bit", CLOCKS_PER_BIT);
+        $display("tb_nexys_top_mnist112: UART model at %0d clocks per bit", CLOCKS_PER_BIT);
         ck_rst = 1'b0;
         repeat (5) @(negedge CLK);
         ck_rst = 1'b1;

@@ -1,15 +1,14 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Module Name: arty_top_axi
-// Description: Digilent Arty A7-100T top level of the accelerator, through
-// the AXI wrapper. The same board and the same pins as arty_top; the byte
-// stream of the UART goes to axi_host_bridge, which drives vit_axi_wrapper
-// over AXI4-Lite and the AXI4-Stream pair, instead of to host_link. The host
-// sees no difference: docs/HOST_PROTOCOL.md is unchanged.
+// Module Name: nexys_top_axi
+// Description: Digilent Nexys A7-100T top level of the accelerator, through
+// the AXI wrapper. The byte stream of the UART goes to axi_host_bridge,
+// which drives vit_axi_wrapper over AXI4-Lite and the AXI4-Stream pair.
+// The host protocol is docs/HOST_PROTOCOL.md. Pins: boards/nexys_a7/nexys_a7.xdc.
 //
 // Clock: the 100 MHz oscillator drives the design directly, no MMCM.
 // Reset: synchronous. It is asserted for the first 15 clocks after
-// configuration (a counter that powers up at zero) and while the RESET
+// configuration (a counter that powers up at zero) and while the CPU_RESET
 // button, ck_rst, is pressed (low), after two synchronising flip-flops.
 // UART: 8N1 at BAUD_RATE, one bit = round(CLOCK_HZ / BAUD_RATE) clocks.
 //   uart_txd_in   data from the USB-UART bridge to the FPGA
@@ -23,7 +22,7 @@
 // buffer (program_plan.txt); the ROM images are rtl/rom/mnist112.
 //////////////////////////////////////////////////////////////////////////////////
 
-module arty_top_axi #(
+module nexys_top_axi #(
     parameter int CLOCK_HZ  = 100_000_000,
     parameter int BAUD_RATE = 921_600
 ) (
