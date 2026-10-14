@@ -2,7 +2,7 @@
 
 
 class SerialTransport:
-    """A serial port (the Arty A7's USB-UART bridge): 8N1, no flow control."""
+    """A serial port (the Nexys A7's USB-UART bridge): 8N1, no flow control."""
 
     def __init__(self, port, baud=921600, timeout=5.0):
         import serial   # pyserial; only needed for a real board

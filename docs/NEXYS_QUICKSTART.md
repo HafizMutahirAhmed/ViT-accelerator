@@ -1,9 +1,12 @@
 # Nexys A7-100T quick start
 
-The same design as on the Arty (`arty_top_axi`, MNIST-112, docs/ARTY_QUICKSTART.md)
-on a Digilent Nexys A7-100T (xc7a100tcsg324-1). Only the constraints differ:
+From a fresh clone to a digit recognised on a Digilent Nexys A7-100T
+(xc7a100tcsg324-1). The design is `nexys_top_axi` with the MNIST-112
+configuration: a 28 x 28 digit is resized to 112 x 112 on the host, sent over
+the USB-UART with the weights, run through two DeiT-Tiny encoder layers on the
+FPGA, and the class scores come back. The constraints are
 `boards/nexys_a7/nexys_a7.xdc` (lines from Digilent's Nexys-A7-100T-Master.xdc,
-digilent-xdc commit 7583b4e) and `boards/nexys_a7/arty_config.xdc`.
+digilent-xdc commit 7583b4e) and `boards/nexys_a7/nexys_config.xdc`.
 
 | Port | Pin | Nexys A7 signal |
 |---|---|---|
@@ -13,17 +16,29 @@ digilent-xdc commit 7583b4e) and `boards/nexys_a7/arty_config.xdc`.
 | uart_rxd_out | D4 | UART_RXD_OUT, FPGA to host |
 | led[0..3] | H17, K15, J13, N14 | LD0 busy, LD1 done, LD2 error, LD3 byte lost |
 
-Prerequisites and `scripts/gen_vectors.sh` are as in steps 1 and 2 of
-docs/ARTY_QUICKSTART.md. The host script needs `python/vectors/mnist112/`.
+## Prerequisites
+
+- Vivado 2022.2 with the cable drivers; on Linux run
+  `<Vivado>/data/xicom/cable_drivers/lin64/install_script/install_drivers/install_drivers` once, as root.
+- Python 3 with `numpy`, `Pillow` and `pyserial`, and on Linux membership of the
+  `dialout` group for the serial port.
+- The program files: `python/vectors/mnist112/`, written by
+  `scripts/gen_vectors.sh`, which needs `torch`, `timm` and `torchvision` in `.venv/`:
+
+```sh
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install torch torchvision timm
+scripts/gen_vectors.sh
+```
 
 ## Build in the Vivado GUI
 
 1. **Tools > Run Tcl Script...** and pick `scripts/create_nexys_project.tcl`.
-   It creates `build/nexys_a7_project/nexys_a7.xpr` with top `arty_top_axi`.
+   It creates `build/nexys_a7_project/nexys_a7.xpr` with top `nexys_top_axi`.
 2. In the Flow Navigator: **Run Synthesis**, then **Run Implementation**, then
    **Generate Bitstream**. Check that WNS and WHS in the timing summary are 0 or more.
 3. **Open Hardware Manager > Open Target > Auto Connect**, then **Program
-   Device** with `build/nexys_a7_project/nexys_a7.runs/impl_1/arty_top_axi.bit`.
+   Device** with `build/nexys_a7_project/nexys_a7.runs/impl_1/nexys_top_axi.bit`.
 
 ## Run
 

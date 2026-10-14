@@ -19,14 +19,14 @@ built yet.
 - [docs/ENGINE.md](docs/ENGINE.md): the matmul engine
 - [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md): the byte protocol between host and board
 - [docs/AXI_REGISTER_MAP.md](docs/AXI_REGISTER_MAP.md): the AXI wrapper
-- [docs/ARTY_QUICKSTART.md](docs/ARTY_QUICKSTART.md): from a clone to a digit on the Arty A7
+- [docs/NEXYS_QUICKSTART.md](docs/NEXYS_QUICKSTART.md): from a clone to a digit on the Nexys A7
 
 ## What is frozen and what is meant to change
 
 | Part | Status |
 |---|---|
 | `rtl/core/` | **Frozen.** The engine and the non-linear units. Application-agnostic: nothing in it knows about MNIST, a board or a transport. Change it only on purpose, with the full regression and a timing run. |
-| `rtl/interface/` | Meant to change: how a host reaches the engine (`host_link`, `vit_accelerator`, the AXI wrapper and bridge). |
+| `rtl/interface/` | Meant to change: how a host reaches the engine (the AXI wrapper and bridge). |
 | `boards/<board>/` | Meant to change: one directory per board, with its top level, transport, constraints and build script. Nothing board-specific is anywhere else. |
 | `python/` application scripts | Meant to change: the model configurations, generators and host software (see the table below). The integer reference models in it (`int8_ops.py`, `nonlinear_ops.py`) define the arithmetic of `rtl/core` and change only with it. |
 | `rtl/rom/<configuration>/` | Generated: table images of one model configuration, written by the generators and kept in the repo because synthesis needs them. |
@@ -39,10 +39,10 @@ built yet.
 | `rtl/interface/` | Host protocol on a byte stream, AXI wrapper and bridge. |
 | `rtl/rom/deit224/`, `rtl/rom/mnist112/` | GELU, exp and reciprocal-square-root table images of the two configurations. |
 | `tb/` | Every testbench, `tb_<name>.sv`. Each reads golden vectors and prints PASS or FAIL. |
-| `boards/arty_a7/` | Digilent Arty A7-100T: top levels, UART, constraints. |
+| `boards/nexys_a7/` | Digilent Nexys A7-100T: the top level `nexys_top_axi`, UART, constraints. |
 | `boards/opal_kelly/` | Opal Kelly XEM7310-A200: a stub for now. |
 | `python/` | Reference models, generators and host software. Vectors and images land in `python/vectors/`, `python/images*/` and `python/mnist/`, none of them tracked. |
-| `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them), `gen_vectors.sh`, and the Vivado Tcl scripts: the Arty project and bitstream, the engine alone out of context. |
+| `scripts/` | `sim.sh` (one testbench), `regress.sh` (all of them), `gen_vectors.sh`, and the Vivado Tcl scripts: the Nexys A7 project, the engine alone out of context. |
 | `docs/` | Spec, engine description, host protocol, AXI register map. |
 
 Simulation output goes to `sim/` and Vivado projects and bitstreams to `build/`; neither is tracked.
@@ -70,11 +70,11 @@ Simulation output goes to `sim/` and Vivado projects and bitstreams to `build/`;
 |---|---|
 | `tb_systolic_array`, `tb_matmul_stream_controller`, `tb_drain`, `tb_requantize`, `tb_matmul_engine`, `tb_matmul_engine_chain` | synthetic, `python/vectors/*.hex` |
 | `tb_matmul_engine_deit224`, `tb_encoder_program` (its defaults), `tb_residual_add`, `tb_gelu_lut`, `tb_layernorm`, `tb_softmax`, `tb_matmul_engine_nonlinear` | 224 x 224 DeiT, `python/vectors/deit/` and `deit_forward/` |
-| `tb_encoder_program_mnist112`, `tb_host_link_mnist112`, `tb_host_replay_mnist112`, `tb_arty_top_mnist112` | 112 x 112 MNIST, `python/vectors/mnist112/` |
+| `tb_encoder_program_mnist112`, `tb_axi_replay_mnist112`, `tb_nexys_top_mnist112` | 112 x 112 MNIST, `python/vectors/mnist112/` |
 
 ### Known limitations
 
-- **No Vivado project is tracked.** `scripts/create_arty_project.tcl` creates
+- **No Vivado project is tracked.** `scripts/create_nexys_project.tcl` creates
   one in `build/` from the sources here.
 - **The engine's default ROM images are the DeiT-224 tables.**
   `matmul_engine` defaults to `rom/gelu_rom.hex`, `rom/exp_rom.hex` and
@@ -113,23 +113,23 @@ scripts/sim.sh systolic_array SYS_ROW=4 SYS_COL=4
 
 ## Running on a board
 
-The first board is a Digilent Arty A7-100T, with a reduced configuration that
+The board is a Digilent Nexys A7-100T, with a reduced configuration that
 fits it: a 112 x 112 input (50 tokens), MNIST digits, weights sent per group
-of matmuls over the USB-UART. **[docs/ARTY_QUICKSTART.md](docs/ARTY_QUICKSTART.md)
+of matmuls over the USB-UART. **[docs/NEXYS_QUICKSTART.md](docs/NEXYS_QUICKSTART.md)
 goes through it step by step.** In short:
 
 ```sh
 scripts/gen_vectors.sh
-vivado -mode batch -source scripts/create_arty_project.tcl     # build/arty_a7_project/arty_a7.xpr
-vivado -mode batch -source scripts/build_arty_bitstream.tcl    # build/arty_top_axi.bit and the numbers
+vivado -mode batch -source scripts/create_nexys_project.tcl    # build/nexys_a7_project/nexys_a7.xpr
+# synthesis, implementation and bitstream in the Vivado GUI
 python3 python/run_image.py --port /dev/ttyUSB1 --ping
 python3 python/run_image.py --port /dev/ttyUSB1 --digit 0
 python3 python/run_image.py --model --digit 0 --golden         # no board: the software model
 ```
 
-Both Tcl scripts also run from the Vivado GUI (Tools > Run Tcl Script). The
-pin assignments come from Digilent's master XDC and were not checked against
-the Arty reference manual; see the quick start.
+The project script also runs from the Vivado GUI (Tools > Run Tcl Script). The
+pin assignments come from Digilent's Nexys-A7-100T-Master.xdc and were not
+checked against the Nexys A7 reference manual.
 
 ## Generating the vectors
 
@@ -141,7 +141,7 @@ the Arty reference manual; see the quick start.
 | `python3 python/gen_vectors.py` | synthetic vectors, `python/vectors/*.hex` | no |
 | `.venv/bin/python python/gen_deit_forward.py` | `python/vectors/deit/`, `python/vectors/deit_forward/`, `rtl/rom/deit224/` | vectors no, ROM images yes |
 | `.venv/bin/python python/gen_mnist_forward.py` | `python/vectors/mnist112/`, `rtl/rom/mnist112/` | vectors no, ROM images yes |
-| `python3 python/run_image.py --model ... --record` | the host byte stream for `tb_host_replay_mnist112` | no |
+| `python3 python/run_image.py --model ... --record` | the host byte stream for `tb_axi_replay_mnist112` | no |
 
 The generators that run the real pretrained DeiT-Tiny need `torch`, `timm` and
 `torchvision` in a local virtual environment, `.venv/`, which is not tracked:

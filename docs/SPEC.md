@@ -28,7 +28,7 @@ model. Everything lives in block RAM; there is no external memory.
 | Weights in the engine | one layer at a time | one group of matmuls at a time; fc1, fc2 and the patch embedding in two column chunks |
 | Descriptor program | 57 ops, 4 phases | 62 ops, 13 phases |
 | Fits | XC7A200T (326 of 365 block RAM tiles) | XC7A100T (94 of 135) |
-| Used for | simulation | the Arty A7-100T |
+| Used for | simulation | the Nexys A7-100T |
 
 ## Architecture
 
@@ -47,13 +47,13 @@ model. Everything lives in block RAM; there is no external memory.
   [AXI_REGISTER_MAP.md](AXI_REGISTER_MAP.md).
 - **Host link.** A byte protocol with checksums ([HOST_PROTOCOL.md](HOST_PROTOCOL.md)),
   bridged to the AXI wrapper. A board supplies only the byte transport: a UART
-  on the Arty A7, FrontPanel pipes on the XEM7310 later.
-- **One clock domain**, synchronous reset. 100 MHz on the Arty A7.
+  on the Nexys A7, FrontPanel pipes on the XEM7310 later.
+- **One clock domain**, synchronous reset. 100 MHz on the Nexys A7.
 
 ## Boards
 
-- **Digilent Arty A7-100T** (XC7A100T): the MNIST-112 configuration over the
-  USB-UART. See [ARTY_QUICKSTART.md](ARTY_QUICKSTART.md).
+- **Digilent Nexys A7-100T** (XC7A100T): the MNIST-112 configuration over the
+  USB-UART. See [NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md).
 - **Opal Kelly XEM7310-A200** (XC7A200T): not built yet.
 
 ## Verification

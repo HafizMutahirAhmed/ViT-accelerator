@@ -11,15 +11,15 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 - boards/         one directory per board: top level, transport, constraints.
 - python/         golden models, generators, host software.
 - scripts/        sim.sh, regress.sh, gen_vectors.sh, Vivado Tcl scripts.
-- docs/           SPEC, ENGINE, HOST_PROTOCOL, AXI_REGISTER_MAP, ARTY_QUICKSTART.
+- docs/           SPEC, ENGINE, HOST_PROTOCOL, AXI_REGISTER_MAP, NEXYS_QUICKSTART.
 - sim/, build/    simulation and build output, not tracked.
 
 ## Commands (Ubuntu; Vivado 2022.2 settings64.sh is sourced before claude starts)
 - Vectors (none are tracked): `scripts/gen_vectors.sh` (needs .venv with torch, timm, torchvision)
 - One testbench: `scripts/sim.sh <name> [PARAM=value ...]`, log in sim/sim_<name>.log
 - Regression: `scripts/regress.sh [jobs]`; about an hour, the DeiT-224 runs dominate
-- Arty project: `vivado -mode batch -source scripts/create_arty_project.tcl`
-- Arty bitstream: `vivado -mode batch -source scripts/build_arty_bitstream.tcl` (output in build/)
+- Nexys A7 project: `vivado -mode batch -source scripts/create_nexys_project.tcl`, or in the GUI
+  Tools > Run Tcl Script; then synthesis, implementation and bitstream in the GUI
 - Engine alone on the XC7A200T: `vivado -mode batch -source scripts/ooc_matmul_engine.tcl`
 - Host: `python3 python/run_image.py --port <port> --ping`, then `--digit 0`; `--model` needs no board
 - Only `python3` is on the PATH; the generators that need torch run with `.venv/bin/python`

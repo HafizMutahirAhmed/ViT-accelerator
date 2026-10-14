@@ -1,10 +1,10 @@
 # Host protocol
 
-`host_link` (`rtl/interface/host_link.sv`) connects a byte stream to the host port of
-`matmul_engine`. The byte stream is all a board has to provide: a UART on the
-Arty A7 (`boards/arty_a7/`), FrontPanel pipes on the XEM7310 later. The
-engine, `host_link` and the host software (`python/`) are the same on every
-board.
+`axi_host_bridge` (`rtl/interface/axi_host_bridge.sv`) runs this protocol on a byte
+stream and drives `vit_axi_wrapper` over AXI. The byte stream is all a board has
+to provide: a UART on the Nexys A7 (`boards/nexys_a7/`), FrontPanel pipes on the
+XEM7310 later. The engine, the bridge and the host software (`python/`) are the
+same on every board.
 
 The host sends a command packet and waits for the response before it sends
 the next one. There is no other flow control.
@@ -97,9 +97,9 @@ Between two phases every buffer can be read with `READ_BUFFER`, which is how
 `python/run_image.py --check` compares the stages on the board with the golden
 tensors.
 
-## UART (Arty A7)
+## UART (Nexys A7)
 
 8 data bits, no parity, 1 stop bit, least significant bit first, 921,600 baud
-by default (`BAUD_RATE` parameter of `boards/arty_a7/arty_top.sv`). No
+by default (`BAUD_RATE` parameter of `boards/nexys_a7/nexys_top_axi.sv`). No
 hardware flow control: the command and response discipline above is enough,
 because the FPGA handles a byte in far less than a byte time.

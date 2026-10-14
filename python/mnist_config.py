@@ -1,4 +1,4 @@
-"""The 112 x 112 MNIST configuration of the golden model (for the Arty A7 bring-up).
+"""The 112 x 112 MNIST configuration of the golden model (for the Nexys A7 bring-up).
 
 The same pretrained DeiT-Tiny, layers 0 and 1, on a 112 x 112 input: 49 patches
 and the class token, 50 tokens, with the position embedding resampled by timm
