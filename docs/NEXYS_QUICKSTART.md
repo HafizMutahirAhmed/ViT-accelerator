@@ -31,6 +31,10 @@ python3 -m venv --system-site-packages .venv
 scripts/gen_vectors.sh
 ```
 
+Without the board, `python3 python/sim_digit.py --digit N [--index K]` runs the K-th test image of digit N
+through the simulated design (xsim, 6 to 10 min), checks every stage bit for bit against the Python model and
+prints the predicted digit; `--all-digits [--jobs J]` does one image of each digit and prints a table.
+
 ## Build in the Vivado GUI
 
 1. **Tools > Run Tcl Script...** and pick `scripts/create_nexys_project.tcl`.
