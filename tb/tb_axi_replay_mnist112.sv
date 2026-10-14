@@ -7,8 +7,8 @@
 // the whole 112 x 112 MNIST program against the software model of the board
 // and wrote down every byte it sent and every byte the model answered. The
 // same packets go to the bridge here, and every response byte must equal the
-// model's: these are the bytes host_link answers in tb_host_replay_mnist112, so the AXI
-// path is byte for byte the path it replaces. After a START packet the
+// model's, so the AXI path is byte for byte the protocol the host script
+// expects. After a START packet the
 // testbench waits until the engine is idle before it sends the next packet.
 //
 // AXI rules. An axi_rule_checker on each of the five AXI4-Lite channels and

@@ -23,7 +23,7 @@ Usage:
   --record       with --model: write every byte sent and received to the program
                  directory (host_stream_tx.hex, host_stream_rx.hex, one byte per
                  line, and host_stream_packets.txt: bytes sent, bytes received and
-                 whether it is a START, per packet) for tb_host_replay_mnist112, which plays
+                 whether it is a START, per packet) for tb_axi_replay_mnist112, which plays
                  them to the RTL
 
 The program directory comes from python/gen_mnist_forward.py: the descriptor

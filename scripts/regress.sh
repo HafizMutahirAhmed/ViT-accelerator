@@ -31,8 +31,6 @@ runs=(
     "matmul_engine_nonlinear"
     "encoder_program"
     "encoder_program_mnist112"
-    "host_link_mnist112"
-    "host_replay_mnist112"
     "nexys_top_mnist112"
     "axi_replay_mnist112"
 )

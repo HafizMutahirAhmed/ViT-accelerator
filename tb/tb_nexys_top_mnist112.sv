@@ -16,7 +16,7 @@
 // and lights the error LED until CLEAR, and that the busy and done LEDs
 // follow the run.
 //
-// The whole program through the byte stream is tb_host_link_mnist112; over the UART
+// The whole program through the byte stream is tb_axi_replay_mnist112; over the UART
 // model it would take about 86 million clocks.
 //
 // Vectors: python/gen_mnist_forward.py, in python/vectors/mnist112. Reset is

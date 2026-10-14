@@ -4,7 +4,7 @@
 // Description: Runs the host protocol of docs/HOST_PROTOCOL.md on a byte
 // stream and turns it into AXI transactions for vit_axi_wrapper. Board
 // independent: a UART or a FrontPanel adapter only delivers and takes bytes.
-// It answers every packet with the bytes host_link answers.
+// It answers every packet with the bytes the host model in python/ answers.
 //
 // Byte stream. rx_data is taken when rx_valid and rx_ready are high, tx_data
 // is sent when tx_valid and tx_ready are high. rx_ready is low while a

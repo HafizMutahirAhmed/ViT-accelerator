@@ -26,5 +26,5 @@ python3 "$root/python/gen_vectors.py"
 # the 112 x 112 MNIST configuration; its probe, python/probe_mnist112.npz, is in the repo
 # (python/train_probe.py trains it again)
 "$root/.venv/bin/python" "$root/python/gen_mnist_forward.py" --dump-only
-# the bytes python/run_image.py exchanges with the board for the test digit, for tb_host_replay_mnist112
+# the bytes python/run_image.py exchanges with the board for the test digit, for tb_axi_replay_mnist112
 python3 "$root/python/run_image.py" --model --digit 0 --golden --clear --record
