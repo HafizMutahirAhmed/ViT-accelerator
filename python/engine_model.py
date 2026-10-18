@@ -9,6 +9,11 @@ what `--check` compares the board with.
 
 The model is not cycle accurate: START runs the phase at once and STATUS then
 reports idle, with the cycle count of python/cycle_model.py.
+
+ModelDevice(memory=True) is a board with external memory: the DDR (a byte
+array) and the DMA behind WRITE_DDR, READ_DDR and DMA_LOAD, with the bridge's
+status bits. Without it those commands get the memory status, as on a board
+whose memory is not calibrated or absent.
 """
 
 import os
@@ -99,11 +104,31 @@ class EngineModel:
 class ModelDevice:
     """A transport: write() takes command packets, read() returns the responses."""
 
-    def __init__(self, depths, rom_dir):
+    def __init__(self, depths, rom_dir, memory=False):
         self.engine = EngineModel(depths, rom_dir)
         self.pending = b""
         self.done = self.error = False
         self.cycles = 0
+        self.memory = memory
+        self.ddr = bytearray(protocol.DDR_BYTES) if memory else None
+
+    def dma_load(self, target, address, payload):
+        """DMA_LOAD: the DDR bytes go to the memory of the target's kind as stream items."""
+        kind, buffer_id = target >> 4 & 3, target & 7
+        offset, length = int.from_bytes(payload[0:4], "little"), int.from_bytes(payload[4:8], "little")
+        data, size, engine = self.ddr[offset:offset + length], protocol.DDR_ITEM_BYTES[kind], self.engine
+        for item in range(length // size):
+            chunk = bytes(data[item * size:(item + 1) * size])
+            if kind == protocol.KIND_POOL:
+                engine.buffers[buffer_id][:, address + item] = np.frombuffer(chunk, dtype=np.int8)
+            elif kind == protocol.KIND_BIAS:
+                engine.bias[:, address + item] = np.frombuffer(chunk, dtype="<i4")
+            elif kind == protocol.KIND_LAYERNORM:
+                engine.gain[address + item] = int.from_bytes(chunk[0:2], "little", signed=True)
+                engine.offset[address + item] = int.from_bytes(chunk[2:6], "little", signed=True)
+            else:
+                engine.descriptors[address + item] = [int.from_bytes(chunk[4 * w:4 * w + 4], "little")
+                                                      for w in range(5)]
 
     def write(self, data):
         while data:
@@ -115,7 +140,21 @@ class ModelDevice:
             status = 0 if protocol.crc16(data[1:8 + size]) == checksum else protocol.STATUS_CHECKSUM
             out = b""
             engine = self.engine
-            if code in protocol.ITEM_BYTES:          # the writes land whatever the checksum says
+            memory_command = code in (protocol.WRITE_DDR, protocol.READ_DDR) or (code == protocol.DMA_LOAD
+                                                                                and count == 1)
+            if memory_command and not self.memory:
+                status |= protocol.STATUS_MEMORY
+            if code == protocol.WRITE_DDR:           # lands whatever the checksum says, as the engine writes
+                if self.memory:
+                    self.ddr[8 * address:8 * address + size] = payload
+            elif code == protocol.DMA_LOAD:
+                if count != 1:
+                    status |= protocol.STATUS_COMMAND
+                elif status == 0:
+                    self.dma_load(target, address, payload)
+            elif status == 0 and code == protocol.READ_DDR:
+                out = bytes(self.ddr[8 * address:8 * (address + count)])
+            elif code in protocol.ITEM_BYTES:        # the writes land whatever the checksum says
                 for item in range(count):
                     chunk = payload[item * (size // count):(item + 1) * (size // count)]
                     if code == protocol.WRITE_BUFFER:
@@ -135,7 +174,8 @@ class ModelDevice:
             elif status == 0 and code == protocol.READ_BUFFER:
                 out = engine.buffers[target][:, address:address + count].T.astype(np.int8).tobytes()
             elif status == 0 and code == protocol.STATUS:
-                out = bytes([(protocol.FLAG_DONE if self.done else 0) | (protocol.FLAG_ERROR if self.error else 0)])
+                out = bytes([(protocol.FLAG_DONE if self.done else 0) | (protocol.FLAG_ERROR if self.error else 0)
+                             | (protocol.FLAG_MEMORY if self.memory else 0)])
                 out += self.cycles.to_bytes(4, "little")
             elif status == 0 and code == protocol.CLEAR:
                 self.done = self.error = False

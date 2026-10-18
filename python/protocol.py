@@ -9,10 +9,15 @@ provide the same two methods.
 START_BYTE, RESPONSE_BYTE = 0xA5, 0x5A
 WRITE_BUFFER, WRITE_BIAS, WRITE_LAYERNORM, WRITE_DESCRIPTOR = 0x01, 0x02, 0x03, 0x04
 START, READ_BUFFER, STATUS, CLEAR = 0x05, 0x06, 0x07, 0x08
-ITEM_BYTES = {WRITE_BUFFER: 8, WRITE_BIAS: 32, WRITE_LAYERNORM: 6, WRITE_DESCRIPTOR: 20}
-STATUS_CHECKSUM, STATUS_COMMAND, STATUS_BUSY = 1, 2, 4
-FLAG_BUSY, FLAG_DONE, FLAG_ERROR = 1, 2, 4
+WRITE_DDR, READ_DDR, DMA_LOAD = 0x09, 0x0A, 0x0B
+ITEM_BYTES = {WRITE_BUFFER: 8, WRITE_BIAS: 32, WRITE_LAYERNORM: 6, WRITE_DESCRIPTOR: 20, WRITE_DDR: 8, DMA_LOAD: 8}
+STATUS_CHECKSUM, STATUS_COMMAND, STATUS_BUSY, STATUS_MEMORY = 1, 2, 4, 8
+FLAG_BUSY, FLAG_DONE, FLAG_ERROR, FLAG_MEMORY = 1, 2, 4, 8
 MAX_ITEMS = 4096          # items per packet; the protocol allows 65,535
+# DMA_LOAD targets: the STREAM_TARGET kinds of docs/AXI_REGISTER_MAP.md, and the bytes one item takes in DDR
+KIND_POOL, KIND_BIAS, KIND_LAYERNORM, KIND_DESCRIPTOR = 0, 1, 2, 3
+DDR_ITEM_BYTES = {KIND_POOL: 8, KIND_BIAS: 32, KIND_LAYERNORM: 8, KIND_DESCRIPTOR: 24}
+DDR_BYTES = 128 << 20     # the Nexys A7's DDR2
 
 
 def crc16(data, crc=0xFFFF):
@@ -57,8 +62,9 @@ class HostLink:
             if status == 0:
                 return rest[:-2]
             if not status & STATUS_CHECKSUM:
-                raise ProtocolError(f"command {code:#04x} refused with status {status} "
-                                    f"({'busy' if status & STATUS_BUSY else 'unknown command'})")
+                reason = ("busy" if status & STATUS_BUSY else
+                          "memory not ready or DMA error" if status & STATUS_MEMORY else "unknown command")
+                raise ProtocolError(f"command {code:#04x} refused with status {status} ({reason})")
             self.clear()
         raise ProtocolError(f"command {code:#04x}: checksum error {self.retries} times")
 
@@ -77,6 +83,27 @@ class HostLink:
             items = min(MAX_ITEMS, count - first)
             data += self.command(READ_BUFFER, buffer_id, address + first, items, response_bytes=8 * items)
         return data
+
+    def write_ddr(self, offset, data):
+        """data to the DDR from byte `offset` on; both multiples of 8 bytes."""
+        assert offset % 8 == 0 and len(data) % 8 == 0
+        self.write(WRITE_DDR, 0, offset // 8, data)
+
+    def read_ddr(self, offset, length):
+        """length bytes of the DDR from byte `offset` on; both multiples of 8."""
+        assert offset % 8 == 0 and length % 8 == 0
+        data = b""
+        for first in range(0, length // 8, MAX_ITEMS):
+            items = min(MAX_ITEMS, length // 8 - first)
+            data += self.command(READ_DDR, 0, offset // 8 + first, items, response_bytes=8 * items)
+        return data
+
+    def dma_load(self, kind, buffer_id, address, offset, length):
+        """The DMA copies `length` bytes from DDR byte `offset` into the memory of `kind` (a pool buffer:
+        buffer_id) from `address` on, as the stream items of docs/AXI_REGISTER_MAP.md."""
+        assert offset % 8 == 0 and length % DDR_ITEM_BYTES[kind] == 0 and length > 0
+        self.command(DMA_LOAD, kind << 4 | buffer_id, address, 1,
+                     offset.to_bytes(4, "little") + length.to_bytes(4, "little"))
 
     def start(self, entry):
         self.command(START, address=entry)

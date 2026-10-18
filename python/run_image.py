@@ -5,6 +5,7 @@ Usage:
   python3 python/run_image.py --port /dev/ttyUSB1 --digit 0          a board on a serial port
   python3 python/run_image.py --model --digit 0                      the software model of the board
   python3 python/run_image.py --port /dev/ttyUSB1 --png digit.png --check
+  python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --ddr      weights from DDR (nexys_top_ddr)
 
   --ping         only ask the board for its status and print it: a link check that takes
                  a moment. Exit code 0 if the board answered and its error flag is clear.
@@ -24,7 +25,14 @@ Usage:
                  directory (host_stream_tx.hex, host_stream_rx.hex, one byte per
                  line, and host_stream_packets.txt: bytes sent, bytes received and
                  whether it is a START, per packet) for tb_axi_replay_mnist112, which plays
-                 them to the RTL
+                 them to the RTL. With --ddr the files are host_stream_ddr_*, for
+                 tb_axi_replay_ddr_mnist112
+  --ddr          a board with external memory (boards/nexys_a7/nexys_top_ddr.sv):
+                 the weights, biases and LayerNorm constants go to DDR once
+                 (python/ddr_image.py; skipped when the DDR already holds them) and
+                 every phase loads them with DMA_LOAD. Only the image itself and the
+                 descriptors cross the serial link per run
+  --ddr-reload   with --ddr: upload the DDR image even if the DDR already holds it
 
 The program directory comes from python/gen_mnist_forward.py: the descriptor
 table, the phases, what to load before each phase and where every stage is.
@@ -49,6 +57,7 @@ import numpy as np
 HOST_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(HOST_DIR)
 sys.path.insert(0, HOST_DIR)
+import ddr_image  # noqa: E402
 import preprocess  # noqa: E402
 import protocol  # noqa: E402
 
@@ -129,8 +138,9 @@ def tensor_of(op, data):
     return banks[(col // LANES) * op["stride"] + row, col % LANES]
 
 
-def run(link, program, embed_in, check=None, verbose=True, clear=False):
+def run(link, program, embed_in, check=None, verbose=True, clear=False, ddr=None):
     """Loads and runs every phase. check(op, tensor) is called for every stage that can be read back.
+    ddr: a ddr_image.DdrImage already in the board's DDR; its loads are then DMA_LOADs.
     Returns (scores of head_mean 50 x 10, scores of head_class 1 x 10, engine cycles)."""
     link.clear()
     if clear:
@@ -142,6 +152,9 @@ def run(link, program, embed_in, check=None, verbose=True, clear=False):
     for phase, first, count in program.phases:
         for load_phase, kind, target, base, _words, file_name in program.loads:
             if load_phase != phase:
+                continue
+            if ddr is not None and file_name in ddr.placements:
+                ddr.load(link, file_name, target, base)
                 continue
             data = row_bank_bytes(embed_in) if file_name == "embed_in_image.hex" else program.load_bytes(
                 kind, file_name)
@@ -168,7 +181,7 @@ def ping(args):
         import engine_model
         program = Program(args.program)
         link = protocol.HostLink(engine_model.ModelDevice(program.depths, os.path.join(
-            REPO_DIR, program.config["rom_dir"])))
+            REPO_DIR, program.config["rom_dir"]), memory=args.ddr))
         where = "the software model"
     else:
         import transports
@@ -189,6 +202,8 @@ def ping(args):
     print(f"  busy  {int(busy)}   the engine is {'running' if busy else 'idle'}")
     print(f"  done  {int(done)}   {'a run has finished since the last START or CLEAR' if done else 'no finished run'}")
     print(f"  error {int(error_flag)}   {'a command was refused or had a wrong checksum; CLEAR resets this' if error_flag else 'no protocol error'}")
+    print(f"  ddr   {int(bool(flags & protocol.FLAG_MEMORY))}   "
+          f"{'external memory calibrated (nexys_top_ddr)' if flags & protocol.FLAG_MEMORY else 'no external memory ready (nexys_top_axi, or DDR not calibrated)'}")
     print(f"  busy cycles of the last run: {cycles}")
     return 1 if error_flag else 0
 
@@ -205,6 +220,8 @@ def main():
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--clear", action="store_true")
     parser.add_argument("--ping", action="store_true")
+    parser.add_argument("--ddr", action="store_true")
+    parser.add_argument("--ddr-reload", action="store_true")
     parser.add_argument("--program", default=os.path.join(HOST_DIR, "vectors", "mnist112"))
     args = parser.parse_args()
     if (args.port is None) == (not args.model):
@@ -223,13 +240,13 @@ def main():
     real = preprocess.im2col(preprocess.image_tensor(pixels, program.config["size"]))
     embed_in = np.clip(np.rint(real / program.config["input_scale"]), -128, 127).astype(np.int8)
 
-    def model_link():
+    def model_link(memory=False):
         import engine_model
         return protocol.HostLink(engine_model.ModelDevice(program.depths, os.path.join(
-            REPO_DIR, program.config["rom_dir"])))
+            REPO_DIR, program.config["rom_dir"]), memory=memory))
 
     if args.model:
-        link = model_link()
+        link = model_link(memory=args.ddr)
     else:
         import transports
         link = protocol.HostLink(transports.SerialTransport(args.port, args.baud))
@@ -257,10 +274,25 @@ def main():
 
     if args.record:
         link.record = []
+    ddr = None
+    if args.ddr:
+        link.clear()
+        flags, _cycles = link.status()
+        if not flags & protocol.FLAG_MEMORY:
+            print("DDR FAIL: the board reports no calibrated external memory (LED 4 off). Is the bitstream "
+                  "nexys_top_ddr? Press CPU_RESET and try again.")
+            return 1
+        ddr = ddr_image.DdrImage(program)
+        upload_started = time.time()
+        if ddr.upload(link, reload=args.ddr_reload):
+            print(f"DDR: uploaded {len(ddr.image)} bytes of weights in {time.time() - upload_started:.1f} s "
+                  f"(once per power-up)")
+        else:
+            print(f"DDR: the weights are already in DDR ({len(ddr.image)} bytes), not uploaded again")
     started = time.time()
     checking = (args.check and not args.model) or (args.model and args.golden)
     mean_scores, class_scores, cycles = run(link, program, embed_in, check if checking else None,
-                                            clear=args.clear)
+                                            clear=args.clear, ddr=ddr)
     elapsed = time.time() - started
 
     patch_sum = mean_scores[1:].astype(np.int64).sum(0)
@@ -272,14 +304,14 @@ def main():
     print(f"engine cycles {cycles}; {link.bytes_sent} bytes sent, {link.bytes_received} received, "
           f"{elapsed:.1f} s")
     if args.record:
-        with open(os.path.join(program.directory, "host_stream_tx.hex"), "w") as tx, \
-                open(os.path.join(program.directory, "host_stream_rx.hex"), "w") as rx, \
-                open(os.path.join(program.directory, "host_stream_packets.txt"), "w") as packets:
+        prefix = os.path.join(program.directory, "host_stream_ddr_" if args.ddr else "host_stream_")
+        with open(prefix + "tx.hex", "w") as tx, open(prefix + "rx.hex", "w") as rx, \
+                open(prefix + "packets.txt", "w") as packets:
             for packet, response in link.record:
                 tx.write("".join(f"{byte:02x}\n" for byte in packet))
                 rx.write("".join(f"{byte:02x}\n" for byte in response))
                 packets.write(f"{len(packet)} {len(response)} {int(packet[1] == protocol.START)}\n")
-        print(f"recorded {len(link.record)} packets to {program.directory}/host_stream_*")
+        print(f"recorded {len(link.record)} packets to {prefix}*")
     if checking:
         print("CHECK FAIL: " + ", ".join(failures) if failures else "CHECK PASS: every stage read back matches")
     return 1 if failures else 0
