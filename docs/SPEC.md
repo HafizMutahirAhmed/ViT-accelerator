@@ -2,9 +2,9 @@
 
 A SystemVerilog accelerator for the first two encoder layers of the pretrained
 DeiT-Tiny vision transformer (ViT-Ti/16), bit-exact against an integer golden
-model. The engine works out of block RAM. The weights are moving to external
-DDR memory, copied into the engine by DMA: see
-[External memory and DMA](#external-memory-and-dma-planned), not built yet.
+model. The engine works out of block RAM. On the Nexys A7 the weights can
+also live in the board's DDR2 and be copied into the engine by DMA: see
+[External memory and DMA](#external-memory-and-dma).
 
 ## Model
 
@@ -51,16 +51,18 @@ DDR memory, copied into the engine by DMA: see
 - **Host link.** A byte protocol with checksums ([HOST_PROTOCOL.md](HOST_PROTOCOL.md)),
   bridged to the AXI wrapper. A board supplies only the byte transport: a UART
   on the Nexys A7, FrontPanel pipes on the XEM7310 later.
-- **One clock domain**, synchronous reset. 100 MHz on the Nexys A7. With
-  external memory the memory controller adds a second clock (below).
+- **One clock domain** for the accelerator, synchronous reset. 100 MHz on the
+  Nexys A7. With external memory the memory controller adds a second clock
+  (below).
 
 ## Boards
 
 - **Digilent Nexys A7-100T** (XC7A100T): the MNIST-112 configuration over the
-  USB-UART. See [NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md).
+  USB-UART, as `nexys_top_axi` (weights over the UART) or `nexys_top_ddr`
+  (weights in the DDR2). See [NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md).
 - **Opal Kelly XEM7310-A200** (XC7A200T): not built yet.
 
-## External memory and DMA (planned)
+## External memory and DMA
 
 ### Why
 
@@ -86,37 +88,41 @@ few short commands cross the host link.
 
 ### Blocks
 
-```
-host ── transport ── axi_host_bridge
-                        │ AXI4-Lite master (32-bit address)
-                        ▼
-                    SmartConnect ──> vit_axi_wrapper s_axi   (registers)
-                      ▲    │    ──> AXI DMA s_axi_lite       (DMA registers)
-                      │    └────> MIG ──> DDR                (DDR window)
-                      │
-        AXI DMA M_AXI_MM2S, M_AXI_S2MM (read and write DDR)
+Steps 1 and 2 below are built: `boards/nexys_a7/nexys_top_ddr.sv`.
 
-  bridge m_axis ──┐
-                  ├─ stream mux ──> vit_axi_wrapper s_axis   (loads)
-  DMA MM2S ───────┘
-  vit_axi_wrapper m_axis ── stream demux ──> bridge s_axis   (READ_BUFFER)
-                                        └──> DMA S2MM        (store to DDR)
+```
+host ── UART ── axi_host_bridge ── m_axi (12-bit) ─────────> vit_axi_wrapper s_axi
+                 │                 m_axis ──┐
+                 │                          ├─ stream mux ──> vit_axi_wrapper s_axis
+                 │            DMA MM2S ─────┘
+                 │ m_system_axi (AXI4-Lite, 32-bit)
+                 ▼
+     block design memory_system:
+         SmartConnect ──> AXI DMA s_axi_lite   0x4040_0000, 64 KiB
+           ▲      └─────> MIG ──> DDR2         0x8000_0000, 128 MiB
+           └── AXI DMA M_AXI_MM2S (reads DDR)
 ```
 
-- **Stream mux and demux** (new, `rtl/interface`): the direct bridge path
-  stays for debugging and for the existing tests; the DMA path is selected
-  between packets, never inside one.
-- **Bridge**: its AXI4-Lite address grows from 12 to 32 bits so it can reach
-  the DMA registers and the DDR window as well as the wrapper.
-- **Address map** (fixed at bring-up): wrapper, AXI DMA and DDR each get a
-  window in the bridge's 32-bit space.
+- **`accelerator_system`** (`rtl/interface`): the bridge, the AXI wrapper and
+  the stream multiplexer; the board adds the transport, clocks, resets and the
+  memory system. The direct bridge path stays for the image, debugging and the
+  existing tests; the DMA's stream is selected only during a `DMA_LOAD`.
+- **Bridge**: a second AXI4-Lite master, `m_system_axi`, with a 32-bit address,
+  for the DMA registers and the DDR. The wrapper keeps its own 12-bit port, so
+  its register path is the one `nexys_top_axi` uses, unchanged. (The plan had
+  one master through SmartConnect for both; two ports keep the tested path.)
+- **Block design** `memory_system`, from `scripts/create_memory_system_bd.tcl`;
+  the MIG configuration is `boards/nexys_a7/mig_ddr2.prj`, Digilent's with the
+  system clock taken from the clocking wizard.
 
 ### Clocks
 
 The engine, wrapper, bridge, DMA and stream mux stay on the 100 MHz system
-clock. The MIG runs on its own user clock, set by the memory speed, and
-SmartConnect does the crossing between the two. That is the only clock
-crossing.
+clock, made by a Clocking Wizard (`system_clock_generator`) from the
+oscillator together with the MIG's 200 MHz reference clock. The MIG runs the
+DDR2 at 325 MHz and its AXI port on its user clock, 81.25 MHz; SmartConnect
+does the crossing. The only other crossing is the calibration flag, through
+two flip-flops into the system clock.
 
 ### What DDR holds
 
@@ -137,11 +143,15 @@ waits. The host issues loads only between phases, as now.
 | `WRITE_DDR` | writes the payload into DDR from an address, once per session |
 | `READ_DDR` | reads DDR back, for checks |
 | `DMA_LOAD` | sets STREAM_TARGET and STREAM_ADDRESS, starts MM2S from a DDR address for a byte count, waits for the DMA to finish |
-| `DMA_STORE` | optional: a pool buffer range to DDR through S2MM |
+| `DMA_STORE` | optional, not built: a pool buffer range to DDR through S2MM |
 
-The existing commands keep working unchanged.
+The existing commands keep working unchanged. [HOST_PROTOCOL.md](HOST_PROTOCOL.md)
+has the formats.
 
 ### Steps
+
+Steps 1 and 2 are built and simulated; the board test is `python/ddr_check.py`
+and `python/run_image.py --ddr` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
 
 1. **DDR alone.** MIG, SmartConnect and the wider bridge address;
    `WRITE_DDR` and `READ_DDR`. On the Nexys: write a pattern, read it back.
@@ -153,12 +163,15 @@ The existing commands keep working unchanged.
 
 ### Verification
 
-- New RTL of our own (stream mux and demux, bridge commands) gets
-  self-checking testbenches as usual, with an AXI memory model standing in
-  for SmartConnect, MIG and DDR.
-- The AXI DMA is checked in a system simulation with its Vivado simulation
-  model and the same AXI memory model. The MIG is not simulated; step 1's
-  pattern test checks it on the board.
+- `tb_axi_replay_ddr_mnist112`: the whole MNIST program through DDR and DMA,
+  `accelerator_system` against `tb/memory_system_model.sv` (a behavioural
+  model of the block design), byte for byte against the host script.
+- `tb_nexys_top_ddr`: the board top through its pins, with models of the
+  clocking wizard and the block design.
+- `tb_dma_ip` (`scripts/sim_dma_ip.sh`): `accelerator_system` against Xilinx's
+  simulation model of the AXI DMA, configured as in the block design.
+- The MIG and SmartConnect are not simulated; `python/ddr_check.py` checks
+  them on the board.
 - Bit-exactness does not change: the engine is the same, and the DDR flow
   must deliver the same bytes as the direct flow, which `run_image.py --check`
   reads back after every phase.

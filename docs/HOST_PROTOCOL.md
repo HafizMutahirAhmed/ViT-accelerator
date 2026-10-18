@@ -1,7 +1,9 @@
 # Host protocol
 
 `axi_host_bridge` (`rtl/interface/axi_host_bridge.sv`) runs this protocol on a byte
-stream and drives `vit_axi_wrapper` over AXI. The byte stream is all a board has
+stream and drives `vit_axi_wrapper` over AXI, and on a board with external
+memory also the AXI DMA and the DDR, through a second AXI4-Lite master
+(`rtl/interface/accelerator_system.sv`). The byte stream is all a board has
 to provide: a UART on the Nexys A7 (`boards/nexys_a7/`), FrontPanel pipes on the
 XEM7310 later. The engine, the bridge and the host software (`python/`) are the
 same on every board.
@@ -39,6 +41,7 @@ Status bits:
 | 0 | checksum | the packet's checksum was wrong |
 | 1 | command | unknown command |
 | 2 | busy | the engine was running; the command was not done |
+| 3 | memory | a memory command (`WRITE_DDR`, `READ_DDR`, `DMA_LOAD`) on a board whose external memory is not calibrated or absent, an error response from the memory system, or a DMA error or timeout |
 
 Any non-zero status also sets the sticky error flag (the error LED), which
 stays set until `CLEAR`.
@@ -55,9 +58,13 @@ stays set until `CLEAR`.
 | `0x06` | `READ_BUFFER` | none | reads `count` addresses of pool buffer `target` from `address` on | `count` x 8 bytes, bank 0 first |
 | `0x07` | `STATUS` | none | nothing | 1 byte flags, then 4 bytes: busy cycles of the last run, least significant byte first |
 | `0x08` | `CLEAR` | none | clears the sticky error flag and the done flag | none |
+| `0x09` | `WRITE_DDR` | 8 | writes the DDR from byte `8 * address` on (`address` counts 8-byte items, so 24 bits reach 128 MiB) | none |
+| `0x0A` | `READ_DDR` | none | reads `count` items of 8 bytes of the DDR from byte `8 * address` on | `count` x 8 bytes |
+| `0x0B` | `DMA_LOAD` | 8: DDR byte offset (32 bits), then length in bytes (32 bits), each least significant byte first; `count` must be 1 | the DMA copies `length` bytes from the DDR offset into the memory `target` names, from `address` on, as the stream items of [AXI_REGISTER_MAP.md](AXI_REGISTER_MAP.md); `target` bits 2:0 are the pool buffer id, bits 5:4 the kind (0 pool buffer, 1 bias store, 2 LayerNorm constants, 3 descriptors) | none |
 
 `STATUS` flags: bit 0 = engine busy, bit 1 = done seen since the last `START`
-or `CLEAR`, bit 2 = sticky error flag.
+or `CLEAR`, bit 2 = sticky error flag, bit 3 = external memory ready (the MIG
+has calibrated the DDR; always 0 on `nexys_top_axi`).
 
 Rules:
 
@@ -70,6 +77,17 @@ Rules:
   command has its payload consumed and discarded and is answered with the
   busy status. The host polls `STATUS` until the busy flag is 0.
 - **`count`** is at most 65,535 items; a larger region takes several packets.
+- **The memory commands** need the external memory (STATUS flag bit 3) and
+  get the memory status without it; a `WRITE_DDR` payload is then consumed
+  and dropped. `WRITE_DDR` and `READ_DDR` are done while the engine runs too;
+  `DMA_LOAD` needs the engine idle, like the other loads. A `WRITE_DDR` lands
+  while its payload arrives, like the other writes.
+- **`DMA_LOAD`** is done only when its checksum is right, and answered when
+  the transfer is over: the DMA is idle and the stream's last beat has reached
+  the engine. The DDR offset must be a multiple of 8 and the length a whole
+  number of items in DDR: 8 bytes per pool address, 32 per bias address, 8 per
+  LayerNorm pair (gain in bytes 0..1, offset in 2..5, two zero bytes), 24 per
+  descriptor (20 bytes, four zero bytes).
 - **A descriptor entry** must be written whole: `WRITE_DESCRIPTOR` items are
   20 bytes.
 
@@ -96,6 +114,15 @@ The descriptor program, the images and their addresses are the files
 Between two phases every buffer can be read with `READ_BUFFER`, which is how
 `python/run_image.py --check` compares the stages on the board with the golden
 tensors.
+
+With external memory (`boards/nexys_a7/nexys_top_ddr.sv`,
+`python/run_image.py --ddr`), the weights, biases and LayerNorm constants are
+put in DDR once per power-up, as `python/ddr_image.py` lays them out (from byte
+1 MiB on, each load on a 64-byte boundary, with a 64-byte signature just
+below 1 MiB that names the image). A run then reads the signature with
+`READ_DDR`, uploads the image with `WRITE_DDR` only if the DDR does not
+already hold it, and in step 2.1 sends one `DMA_LOAD` per load instead of its
+bytes; only the image itself goes as `WRITE_BUFFER`.
 
 ## UART (Nexys A7)
 

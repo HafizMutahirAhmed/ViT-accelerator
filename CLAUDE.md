@@ -20,8 +20,12 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 - Regression: `scripts/regress.sh [jobs]`; about an hour, the DeiT-224 runs dominate
 - Nexys A7 project: `vivado -mode batch -source scripts/create_nexys_project.tcl`, or in the GUI
   Tools > Run Tcl Script; then synthesis, implementation and bitstream in the GUI
+- Nexys A7 with DDR2 (nexys_top_ddr): `vivado -mode batch -source scripts/create_nexys_ddr_project.tcl`,
+  then `vivado -mode batch -source scripts/build_nexys_ddr.tcl` (reports in build/nexys_a7_ddr_reports)
+- The bridge against the real AXI DMA IP: `scripts/sim_dma_ip.sh`, log in sim/sim_dma_ip.log
 - Engine alone on the XC7A200T: `vivado -mode batch -source scripts/ooc_matmul_engine.tcl`
-- Host: `python3 python/run_image.py --port <port> --ping`, then `--digit 0`; `--model` needs no board
+- Host: `python3 python/run_image.py --port <port> --ping`, then `--digit 0`; `--model` needs no board;
+  with nexys_top_ddr: `python3 python/ddr_check.py --port <port>`, then `run_image.py ... --ddr`
 - Only `python3` is on the PATH; the generators that need torch run with `.venv/bin/python`
 
 ## Conventions

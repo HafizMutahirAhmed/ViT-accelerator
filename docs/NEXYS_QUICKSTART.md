@@ -55,3 +55,59 @@ The FT2232 on the board gives two serial ports (`/dev/ttyUSB0` and
 `/dev/ttyUSB1` on Linux, two COM ports on Windows); one is JTAG, one is the
 UART. If `--ping` gets no answer on one, try the other. CPU_RESET resets
 the design.
+
+## With the DDR2 as external memory
+
+`nexys_top_ddr` is the same accelerator with the board's 128 MiB DDR2 and an
+AXI DMA (block design `memory_system`: MIG, AXI DMA, SmartConnect; a Clocking
+Wizard makes the clocks). The weights go to DDR once per power-up; after that a
+run sends only the image (about 45 KB instead of 1.1 MB over the UART) and the
+DMA copies each phase's weights from DDR into the engine. `nexys_top_axi` above
+is unchanged and still works as before.
+
+| Port | Pin | Nexys A7 signal |
+|---|---|---|
+| led[4] | R18 | LD4: the MIG has calibrated the DDR2 |
+| ddr2_* | bank 34 | the DDR2, pins from the MIG configuration `boards/nexys_a7/mig_ddr2.prj` |
+
+The other pins are those of the table at the top. The MIG configuration is
+Digilent's, from the Nexys A7-100T board files, with the system clock taken
+from the clocking wizard; the source and its sha256 are in the file.
+
+### Build
+
+In the GUI: **Tools > Run Tcl Script...** with `scripts/create_nexys_ddr_project.tcl`
+(it creates `build/nexys_a7_ddr_project/nexys_a7_ddr.xpr` with top `nexys_top_ddr`,
+the clocking wizard and the block design), then **Generate Bitstream**. In batch:
+
+```sh
+vivado -mode batch -source scripts/create_nexys_ddr_project.tcl
+vivado -mode batch -source scripts/build_nexys_ddr.tcl
+```
+
+`build_nexys_ddr.tcl` writes the reports to `build/nexys_a7_ddr_reports/` and
+prints WNS and WHS; both must be 0 or more. Program the device with
+`build/nexys_a7_ddr_project/nexys_a7_ddr.runs/impl_1/nexys_top_ddr.bit`.
+
+### Run
+
+```sh
+python3 python/run_image.py --port /dev/ttyUSB1 --ping              # ddr 1 = DDR2 calibrated
+python3 python/ddr_check.py --port /dev/ttyUSB1                     # DDR and DMA bring-up
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --ddr --check
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 3 --ddr     # weights already in DDR
+```
+
+1. After programming, **LD4 must come on** within a second: the MIG has
+   calibrated the DDR2. `--ping` then prints `ddr 1`. If LD4 stays off, press
+   CPU_RESET once; if it still stays off, the bitstream is not
+   `nexys_top_ddr` or the MIG did not calibrate.
+2. `ddr_check.py` writes 64 KiB to DDR and reads it back, then moves data into
+   the engine's buffers with the DMA and reads it back; every step prints PASS
+   or FAIL with the first mismatch index. It overwrites the engine's buffers,
+   which a run writes again anyway.
+3. The first `run_image.py --ddr` uploads the weights (about 1 MB, roughly 12 s
+   over the UART) and prints `DDR: uploaded ...`; later runs on the powered
+   board print `the weights are already in DDR` and take well under a second
+   of transfer. `--ddr-reload` uploads them again. `--check` compares every
+   stage with the software model, as without DDR.
