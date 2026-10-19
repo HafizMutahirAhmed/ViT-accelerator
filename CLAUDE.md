@@ -26,6 +26,7 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 - Engine alone on the XC7A200T: `vivado -mode batch -source scripts/ooc_matmul_engine.tcl`
 - Host: `python3 python/run_image.py --port <port> --ping`, then `--digit 0`; `--model` needs no board;
   with nexys_top_ddr: `python3 python/ddr_check.py --port <port>`, then `run_image.py ... --ddr`
+  (step by step) or `--run` (one RUN command per image)
 - Only `python3` is on the PATH; the generators that need torch run with `.venv/bin/python`
 
 ## Conventions

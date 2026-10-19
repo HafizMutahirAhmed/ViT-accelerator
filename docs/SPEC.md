@@ -88,7 +88,7 @@ few short commands cross the host link.
 
 ### Blocks
 
-Steps 1 and 2 below are built: `boards/nexys_a7/nexys_top_ddr.sv`.
+Steps 1 to 3 below are built: `boards/nexys_a7/nexys_top_ddr.sv`.
 
 ```
 host ── UART ── axi_host_bridge ── m_axi (12-bit) ─────────> vit_axi_wrapper s_axi
@@ -186,8 +186,8 @@ has the formats.
 
 ### Steps
 
-Steps 1 and 2 are built and simulated; the board test is `python/ddr_check.py`
-and `python/run_image.py --ddr` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
+Steps 1 to 3 are built and simulated; the board test is `python/ddr_check.py`,
+`python/run_image.py --ddr` and `--run` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
 
 1. **DDR alone.** MIG, SmartConnect and the wider bridge address;
    `WRITE_DDR` and `READ_DDR`. On the Nexys: write a pattern, read it back.
@@ -205,6 +205,9 @@ and `python/run_image.py --ddr` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
 - `tb_axi_replay_ddr_mnist112`: the whole MNIST program through DDR and DMA,
   `accelerator_system` against `tb/memory_system_model.sv` (a behavioural
   model of the block design), byte for byte against the host script.
+- `tb_axi_replay_run_mnist112`: the same with `RUN`: the bridge works through
+  the run list in the memory model; the run's total cycle count and the scores
+  must equal the model's.
 - `tb_nexys_top_ddr`: the board top through its pins, with models of the
   clocking wizard and the block design.
 - `tb_dma_ip` (`scripts/sim_dma_ip.sh`): `accelerator_system` against Xilinx's

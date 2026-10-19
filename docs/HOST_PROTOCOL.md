@@ -41,7 +41,8 @@ Status bits:
 | 0 | checksum | the packet's checksum was wrong |
 | 1 | command | unknown command |
 | 2 | busy | the engine was running; the command was not done |
-| 3 | memory | a memory command (`WRITE_DDR`, `READ_DDR`, `DMA_LOAD`) on a board whose external memory is not calibrated or absent, an error response from the memory system, or a DMA error or timeout |
+| 3 | memory | a memory command (`WRITE_DDR`, `READ_DDR`, `DMA_LOAD`, `RUN`) on a board whose external memory is not calibrated or absent, an error response from the memory system, or a DMA error or timeout |
+| 4 | run | a `RUN` stopped: an entry of an unknown kind, the engine's error bit, an error response from the wrapper, or a phase that did not finish within `PHASE_TIMEOUT_CYCLES` (2^28 clocks, 2.7 s at 100 MHz) |
 
 Any non-zero status also sets the sticky error flag (the error LED), which
 stays set until `CLEAR`.
@@ -60,6 +61,7 @@ stays set until `CLEAR`.
 | `0x08` | `CLEAR` | none | clears the sticky error flag and the done flag | none |
 | `0x09` | `WRITE_DDR` | 8 | writes the DDR from byte `8 * address` on (`address` counts 8-byte items, so 24 bits reach 128 MiB) | none |
 | `0x0A` | `READ_DDR` | none | reads `count` items of 8 bytes of the DDR from byte `8 * address` on | `count` x 8 bytes |
+| `0x0C` | `RUN` | none; `count` = number of entries, at least 1 | runs `count` entries of the run list at DDR byte `8 * address` (below) | 4 bytes: busy cycles of all its phases, least significant byte first |
 | `0x0B` | `DMA_LOAD` | 8: DDR byte offset (32 bits), then length in bytes (32 bits), each least significant byte first; `count` must be 1 | the DMA copies `length` bytes from the DDR offset into the memory `target` names, from `address` on, as the stream items of [AXI_REGISTER_MAP.md](AXI_REGISTER_MAP.md); `target` bits 2:0 are the pool buffer id, bits 5:4 the kind (0 pool buffer, 1 bias store, 2 LayerNorm constants, 3 descriptors) | none |
 
 `STATUS` flags: bit 0 = engine busy, bit 1 = done seen since the last `START`
@@ -90,6 +92,31 @@ Rules:
   descriptor (20 bytes, four zero bytes).
 - **A descriptor entry** must be written whole: `WRITE_DESCRIPTOR` items are
   20 bytes.
+- **`RUN`** needs the external memory and the engine idle, and is done only
+  when its checksum is right. It is answered when the list is done or a step
+  failed; a failed step stops the run (the steps before it have been done)
+  and answers with the memory status (an error on the memory system, a DMA
+  error or timeout) or the run status.
+
+## Run list
+
+A list of 16-byte entries in DDR, four 32-bit words each, least significant
+byte first. `RUN` fetches them one after the other and runs each:
+
+| Word | `LOAD` (kind 1) | `START` (kind 2) |
+|---|---|---|
+| 0 | bits 7:0 kind; bits 15:8 the target byte of `DMA_LOAD` (2:0 pool buffer id, 5:4 kind of memory) | bits 7:0 kind |
+| 1 | first address in the target memory | first descriptor entry |
+| 2 | DDR byte offset | 0 |
+| 3 | length in bytes | 0 |
+
+- **`LOAD`** does what `DMA_LOAD` does with those fields, with the same rules
+  for the offset and the length.
+- **`START`** starts the engine at the entry, waits for done and adds the
+  run's busy cycles to the total that `RUN` answers with.
+- Any other kind stops the run with the run status.
+
+The bridge holds no list: `count` bounds the run, so there is no end entry.
 
 ## Checksum
 
@@ -114,6 +141,13 @@ The descriptor program, the images and their addresses are the files
 Between two phases every buffer can be read with `READ_BUFFER`, which is how
 `python/run_image.py --check` compares the stages on the board with the golden
 tensors.
+
+With `RUN` (`python/run_image.py --run`) the host writes, once per power-up,
+also the descriptor table and the run list into DDR (`python/ddr_image.py`:
+the list loads the descriptors, then per phase every load and a `START`). For
+one image it writes the image to DDR byte 0 with `WRITE_DDR`, sends one `RUN`
+and reads the scores with `READ_BUFFER`. The stages before the last phase are
+overwritten by then; `--check` without `--run` reads them all.
 
 With external memory (`boards/nexys_a7/nexys_top_ddr.sv`,
 `python/run_image.py --ddr`), the weights, biases and LayerNorm constants are

@@ -96,6 +96,7 @@ python3 python/run_image.py --port /dev/ttyUSB1 --ping              # ddr 1 = DD
 python3 python/ddr_check.py --port /dev/ttyUSB1                     # DDR and DMA bring-up
 python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --ddr --check
 python3 python/run_image.py --port /dev/ttyUSB1 --digit 3 --ddr     # weights already in DDR
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 3 --run --check   # one RUN per image
 ```
 
 1. After programming, **LD4 must come on** within a second: the MIG has
@@ -103,11 +104,17 @@ python3 python/run_image.py --port /dev/ttyUSB1 --digit 3 --ddr     # weights al
    CPU_RESET once; if it still stays off, the bitstream is not
    `nexys_top_ddr` or the MIG did not calibrate.
 2. `ddr_check.py` writes 64 KiB to DDR and reads it back, then moves data into
-   the engine's buffers with the DMA and reads it back; every step prints PASS
-   or FAIL with the first mismatch index. It overwrites the engine's buffers,
-   which a run writes again anyway.
+   the engine's buffers with the DMA and reads it back, then runs two small run
+   lists with `RUN` (one that must work, one that must be refused); every step
+   prints PASS or FAIL with the first mismatch index. It overwrites the
+   engine's buffers, which a run writes again anyway.
 3. The first `run_image.py --ddr` uploads the weights (about 1 MB, roughly 12 s
    over the UART) and prints `DDR: uploaded ...`; later runs on the powered
    board print `the weights are already in DDR` and take well under a second
    of transfer. `--ddr-reload` uploads them again. `--check` compares every
    stage with the software model, as without DDR.
+4. `--run` lets the board run the whole program by itself: the image goes to
+   DDR, then one `RUN` command, and the board answers when the scores are
+   ready. `--check` then compares the last phase's stages (the final
+   LayerNorm and both classifiers) with the software model; the earlier
+   stages are overwritten by then, so use `--ddr --check` to see them all.
