@@ -5,7 +5,7 @@
 // memory_system_model.sv standing in for the MIG, the AXI DMA and the
 // SmartConnect, against the byte stream of the real host script.
 //
-// python/run_image.py --model --digit 0 --golden --clear --ddr --record ran
+// python/run_image.py --model --digit 0 --golden --clear --step --record ran
 // the whole 112 x 112 MNIST program against the software model of a board with
 // DDR: it uploaded the weights, biases and LayerNorm constants to DDR with
 // WRITE_DDR (after a READ_DDR of the signature), then ran every phase with
@@ -22,15 +22,15 @@
 // three streams. tx_ready toggles pseudo-randomly; the memory model adds its
 // own random delays and stream gaps.
 //
-// Vectors: python/vectors/mnist112/host_stream_ddr_tx.hex, host_stream_ddr_rx.hex
-// and host_stream_ddr_packets.txt. 8x8 only.
+// Vectors: python/models/nexys_L2/host_stream_step_tx.hex, host_stream_step_rx.hex
+// and host_stream_step_packets.txt. 8x8 only.
 //
 // sim.sh: also compile axi_rule_checker.sv
 // sim.sh: also compile memory_system_model.sv
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_axi_replay_ddr_mnist112 #(
-    parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
+module tb_axi_replay_step #(
+    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
 );
 
     localparam int TX_BYTES_MAX     = 4194304;
@@ -71,9 +71,9 @@ module tb_axi_replay_ddr_mnist112 #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
     ) dut (
         .aclk                 (CLK),
         .aresetn              (!reset),
@@ -256,7 +256,7 @@ module tb_axi_replay_ddr_mnist112 #(
         name = {VECTOR_DIR, file_name};
         fd = $fopen(name, "r");
         if (fd == 0) begin
-            $fatal(1, "FAIL: cannot open vector file %s (run python/run_image.py --model --digit 0 --golden --clear --ddr --record)",
+            $fatal(1, "FAIL: cannot open vector file %s (run python/run_image.py --model --digit 0 --golden --clear --step --record)",
                    name);
         end
         $fclose(fd);
@@ -278,9 +278,9 @@ module tb_axi_replay_ddr_mnist112 #(
         longint expected_store = 0, expected_reads = 0, expected_dma_beats = 0;
         int     violations;
 
-        $display("tb_axi_replay_ddr_mnist112: the host script's DDR byte stream through bridge, DMA model, AXI wrapper and engine");
-        $readmemh(vector_file("host_stream_ddr_tx.hex"), host_bytes);
-        $readmemh(vector_file("host_stream_ddr_rx.hex"), model_bytes);
+        $display("tb_axi_replay_step: the host script's DDR byte stream through bridge, DMA model, AXI wrapper and engine");
+        $readmemh(vector_file("host_stream_step_tx.hex"), host_bytes);
+        $readmemh(vector_file("host_stream_step_rx.hex"), model_bytes);
         reset    = 1'b1;
         rx_valid = 1'b0;
         rx_data  = '0;
@@ -290,7 +290,7 @@ module tb_axi_replay_ddr_mnist112 #(
             @(negedge CLK);
         end
 
-        packets = $fopen(vector_file("host_stream_ddr_packets.txt"), "r");
+        packets = $fopen(vector_file("host_stream_step_packets.txt"), "r");
         while (!$feof(packets)) begin
             fields = $fscanf(packets, "%d %d %d\n", tx_count, rx_count, is_start);
             if (fields != 3) begin

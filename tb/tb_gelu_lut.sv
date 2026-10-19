@@ -6,9 +6,9 @@
 // The input is streamed the way the engine does it, LANES rows per cycle, row
 // tile by row tile, with valid_in dropping now and then, and every valid
 // output is compared with the golden INT8 tensor. The ROM is the one the
-// design uses, rtl/rom/deit224/gelu_rom.hex.
+// design uses, rtl/rom/opal_kelly/gelu_rom.hex.
 //
-// Vectors come from python/gen_deit_forward.py, in python/vectors/deit_forward:
+// Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, x file, "-", y file,
 //                      descriptor file, "-", "-"
 //   x, y               INT8 rows x cols, row-major
@@ -17,7 +17,7 @@
 
 module tb_gelu_lut #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../../python/vectors/deit_forward/"
+    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
 );
 
     import vit_config_pkg::descriptor_t;
@@ -31,7 +31,9 @@ module tb_gelu_lut #(
     logic                                    reset;
     logic                                    valid_in;
     logic signed [LANES-1:0][DATA_WIDTH-1:0] x_in;
-    logic [0:0]                              table_select;
+    // as wide as the engine's table select: $clog2 of the package's table count
+    localparam int SELECT_WIDTH = vit_config_pkg::GELU_TABLE_COUNT > 1 ? $clog2(vit_config_pkg::GELU_TABLE_COUNT) : 1;
+    logic [SELECT_WIDTH-1:0]                 table_select;
     logic                                    valid_out;
     logic signed [LANES-1:0][DATA_WIDTH-1:0] y_out;
 
@@ -121,7 +123,7 @@ module tb_gelu_lut #(
         outputs_seen   = 0;
         mismatches     = 0;
         first_mismatch = -1;
-        table_select   = descriptor.bias_base[0];
+        table_select   = descriptor.bias_base[SELECT_WIDTH-1:0];
         @(negedge CLK);
 
         for (int tile = 0; tile < row_tiles; tile++) begin

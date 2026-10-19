@@ -29,7 +29,11 @@
 // LEDs: led[0] engine busy, led[1] done seen, led[2] error, led[3] a received
 // byte was lost (sticky, cleared by reset), led[4] DDR2 calibrated.
 //
-// Model configuration: the 112 x 112 MNIST one, as in nexys_top_axi.
+// Model configuration: the board "nexys" of python/make_model.py, 112 x 112
+// (50 tokens), any number of layers from 1 to 12: the pool depths below are
+// that board's (BOARDS in make_model.py), the ROM images in rtl/rom/nexys hold
+// the GELU and exp tables of all 12 layers. The layers and the weights come
+// from DDR at run time, so another layer count needs no new bitstream.
 //////////////////////////////////////////////////////////////////////////////////
 
 module nexys_top_ddr #(
@@ -173,9 +177,9 @@ module nexys_top_ddr #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
     ) accelerator (
         .aclk                 (CLK),
         .aresetn              (!reset),

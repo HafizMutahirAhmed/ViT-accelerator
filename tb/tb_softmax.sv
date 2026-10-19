@@ -7,9 +7,9 @@
 // the engine does it: LANES rows per cycle and, for each row tile, three
 // passes with a wait for pass_ready before the second and the third.
 // valid_in drops now and then. Every valid output is compared with the golden
-// tensor (0..127). The ROM is the one the design uses, rtl/rom/deit224/exp_rom.hex.
+// tensor (0..127). The ROM is the one the design uses, rtl/rom/opal_kelly/exp_rom.hex.
 //
-// Vectors come from python/gen_deit_forward.py, in python/vectors/deit_forward:
+// Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, s file, "-", p file,
 //                      descriptor file, "-", "-"
 //   s, p               INT8 rows x cols, row-major
@@ -18,7 +18,7 @@
 
 module tb_softmax #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../../python/vectors/deit_forward/"
+    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
 );
 
     import vit_config_pkg::descriptor_t;
@@ -36,7 +36,9 @@ module tb_softmax #(
     logic                                    first_in;
     logic                                    last_in;
     logic                                    pass_ready;
-    logic [2:0]                              table_select;
+    // as wide as the engine's table select: $clog2 of the package's table count
+    localparam int SELECT_WIDTH = $clog2(vit_config_pkg::SOFTMAX_TABLE_COUNT);
+    logic [SELECT_WIDTH-1:0]                 table_select;
     logic                                    valid_out;
     logic signed [LANES-1:0][DATA_WIDTH-1:0] y_out;
 
@@ -131,7 +133,7 @@ module tb_softmax #(
         outputs_seen   = 0;
         mismatches     = 0;
         first_mismatch = -1;
-        table_select = descriptor.bias_base[2:0];
+        table_select = descriptor.bias_base[SELECT_WIDTH-1:0];
         @(negedge CLK);
 
         for (int tile = 0; tile < row_tiles; tile++) begin

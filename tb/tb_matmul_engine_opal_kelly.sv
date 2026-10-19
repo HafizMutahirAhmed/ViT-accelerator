@@ -2,7 +2,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Self-checking testbench for matmul_engine on the real pretrained DeiT-Tiny.
 //
-// python/gen_deit_vectors.py captures the real input of every matmul of the
+// python/make_model.py --board opal_kelly --layers 2 captures the real input of every matmul of the
 // patch embedding, encoder layers 0 and 1 and the classifier head, quantizes
 // it to INT8 and builds each op's golden INT8 result. Softmax, LayerNorm and
 // GELU are not built yet, so every op is tested on its own: the testbench
@@ -24,10 +24,10 @@
 //   descriptor  descriptor_t as 32-bit words. Tables are for an 8x8 array.
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_matmul_engine_deit224 #(
+module tb_matmul_engine_opal_kelly #(
     parameter int    SYS_ROW    = 8,
     parameter int    SYS_COL    = 8,
-    parameter string VECTOR_DIR = "../../python/vectors/deit/"
+    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/matmuls/"
 );
 
     import vit_config_pkg::descriptor_t;
@@ -48,7 +48,7 @@ module tb_matmul_engine_deit224 #(
     localparam int LANES            = (SYS_ROW > SYS_COL) ? SYS_ROW : SYS_COL;
     localparam int PIPELINE_LATENCY = SYS_ROW + SYS_COL - 2 + vit_config_pkg::DSP_LATENCY;
 
-    // must match BANK_DEPTH in python/gen_deit_vectors.py
+    // must match BANK_DEPTH in python/golden_model.py
     localparam int BUFFER_DEPTH = vit_config_pkg::BANK_DEPTH_MAX;
 
     localparam int GROUP_COUNT      = 4;  // embed, L0, L1, head
@@ -383,7 +383,7 @@ module tb_matmul_engine_deit224 #(
         longint total_macs   = 0;
         longint total_flush  = 0;
 
-        $display("tb_matmul_engine_deit224: SYS_ROW=%0d SYS_COL=%0d", SYS_ROW, SYS_COL);
+        $display("tb_matmul_engine_opal_kelly: SYS_ROW=%0d SYS_COL=%0d", SYS_ROW, SYS_COL);
         reset                        = 1'b1;
         start                        = 1'b0;
         start_index                  = '0;

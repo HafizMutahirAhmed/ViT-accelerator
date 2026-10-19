@@ -5,7 +5,7 @@
 // engine), with memory_system_model.sv standing in for the MIG, the AXI DMA
 // and the SmartConnect, against the byte stream of the real host script.
 //
-// python/run_image.py --model --digit 0 --golden --clear --run --record ran
+// python/run_image.py --model --digit 0 --golden --clear --record ran
 // the whole 112 x 112 MNIST program against the software model of a board with
 // DDR: it uploaded the weights, biases, LayerNorm constants, descriptors and
 // the run list to DDR with WRITE_DDR (after a READ_DDR of the signature),
@@ -26,20 +26,20 @@
 // three streams. tx_ready toggles pseudo-randomly; the memory model adds its
 // own random delays and stream gaps.
 //
-// Vectors: python/vectors/mnist112/host_stream_run_tx.hex, host_stream_run_rx.hex,
+// Vectors: python/models/nexys_L2/host_stream_run_tx.hex, host_stream_run_rx.hex,
 // host_stream_run_packets.txt and host_stream_run_summary.txt. 8x8 only.
 //
 // sim.sh: also compile axi_rule_checker.sv
 // sim.sh: also compile memory_system_model.sv
 //////////////////////////////////////////////////////////////////////////////////
 
-module tb_axi_replay_run_mnist112 #(
-    parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
+module tb_axi_replay_run #(
+    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
 );
 
-    localparam int TX_BYTES_MAX     = 4194304;
+    localparam int TX_BYTES_MAX     = 16777216;     // a 12-layer model uploads about 6.3 MB
     localparam int RX_BYTES_MAX     = 1048576;
-    localparam int RESPONSE_TIMEOUT = 16000000;     // a RUN answers after the whole program
+    localparam int RESPONSE_TIMEOUT = 100000000;    // clocks; a RUN answers after the whole program
 
     logic       CLK = 1'b0;
     logic       reset;
@@ -75,9 +75,9 @@ module tb_axi_replay_run_mnist112 #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
     ) dut (
         .aclk                 (CLK),
         .aresetn              (!reset),
@@ -262,7 +262,7 @@ module tb_axi_replay_run_mnist112 #(
         name = {VECTOR_DIR, file_name};
         fd = $fopen(name, "r");
         if (fd == 0) begin
-            $fatal(1, "FAIL: cannot open vector file %s (run python/run_image.py --model --digit 0 --golden --clear --run --record)",
+            $fatal(1, "FAIL: cannot open vector file %s (run python/run_image.py --model --digit 0 --golden --clear --record)",
                    name);
         end
         $fclose(fd);
@@ -287,7 +287,7 @@ module tb_axi_replay_run_mnist112 #(
         longint expected_store = 0, expected_reads = 0, expected_dma_beats = 0;
         int     violations;
 
-        $display("tb_axi_replay_run_mnist112: the host script's RUN byte stream through bridge, DMA model, AXI wrapper and engine");
+        $display("tb_axi_replay_run: the host script's RUN byte stream through bridge, DMA model, AXI wrapper and engine");
         $readmemh(vector_file("host_stream_run_tx.hex"), host_bytes);
         $readmemh(vector_file("host_stream_run_rx.hex"), model_bytes);
         summary = $fopen(vector_file("host_stream_run_summary.txt"), "r");

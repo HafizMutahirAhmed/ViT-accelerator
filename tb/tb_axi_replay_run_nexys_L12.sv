@@ -1,0 +1,22 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// tb_axi_replay_run with the 12-layer Nexys model: the same testbench and the same
+// hardware (the board's buffer depths and ROM images), the byte stream of
+// python/run_image.py --model --digit 0 --golden --clear --record
+// --model-dir python/models/nexys_L12, made after
+// python/make_model.py --board nexys --layers 12.
+// The program has more than 256 descriptors, so the run list loads them phase
+// by phase. About two hours of simulation; not in scripts/regress.sh.
+//
+// sim.sh: also compile tb_axi_replay_run.sv
+// sim.sh: also compile axi_rule_checker.sv
+// sim.sh: also compile memory_system_model.sv
+//////////////////////////////////////////////////////////////////////////////////
+
+module tb_axi_replay_run_nexys_L12;
+
+    tb_axi_replay_run #(
+        .VECTOR_DIR ("../../python/models/nexys_L12/")
+    ) replay ();
+
+endmodule

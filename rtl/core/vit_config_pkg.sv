@@ -101,9 +101,10 @@ package vit_config_pkg;
     // cycles through residual_add: operand, product, sum, shifted, output
     parameter  RESIDUAL_ADD_LATENCY = 5;
 
-    // gelu_lut: one table per GELU of the model; cycles through it: address
-    // register, ROM read, output register
-    parameter  GELU_TABLE_COUNT = 2;
+    // gelu_lut: one table per GELU of the model, so one per encoder layer, for
+    // up to the 12 layers of DeiT-Tiny; cycles through it: address register,
+    // ROM read, output register
+    parameter  GELU_TABLE_COUNT = 12;
     parameter  GELU_LATENCY     = 3;
 
     // layernorm: gain (signed) and offset (signed) per column, for every
@@ -120,10 +121,11 @@ package vit_config_pkg;
     // centre, times reciprocal, shift, times gain, plus offset, shift, clip
     parameter  LAYERNORM_LATENCY = 9;
 
-    // softmax: one exp table per attention head and layer (6 used); an entry
+    // softmax: one exp table per attention head and layer, 3 heads in each of
+    // up to 12 layers; an entry
     // has EXP_BITS bits; the quotient 127 / sum has QUOTIENT_FRAC more
     // fraction bits than an entry
-    parameter  SOFTMAX_TABLE_COUNT   = 8;
+    parameter  SOFTMAX_TABLE_COUNT   = 36;
     parameter  SOFTMAX_EXP_BITS      = 12;
     parameter  SOFTMAX_QUOTIENT_FRAC = 10;
     // cycles from a pass 2 input of softmax to its output: score, distance,

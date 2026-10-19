@@ -24,11 +24,11 @@
 // (host_stream_ddrcheck_summary.txt, as ddr_image.run_totals counts them).
 //
 // Run with scripts/sim_dma_ip.sh, not sim.sh: it needs the DMA's libraries.
-// Vectors: python/vectors/mnist112/host_stream_ddrcheck_*.
+// Vectors: python/models/nexys_L2/host_stream_ddrcheck_*.
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_dma_ip #(
-    parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
+    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
 );
 
     localparam int          TX_BYTES_MAX     = 262144;
@@ -72,9 +72,9 @@ module tb_dma_ip #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/mnist112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/mnist112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/mnist112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
     ) dut (
         .aclk                 (CLK),
         .aresetn              (!reset),
@@ -311,7 +311,7 @@ module tb_dma_ip #(
     end
 
     // ------------------------------------------------------------------
-    // checks on the way, as in tb_axi_replay_mnist112
+    // checks on the way, as in tb_axi_replay_step
     // ------------------------------------------------------------------
     axi_rule_checker #(.PAYLOAD_WIDTH(73), .NAME("DMA stream")) check_dma (
         .CLK(CLK), .reset(reset), .flush(1'b0), .valid(dma_tvalid), .ready(dma_tready),

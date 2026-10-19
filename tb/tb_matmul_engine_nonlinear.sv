@@ -11,7 +11,7 @@
 // the pattern, or, where an operand was loaded there, the operand. For a
 // LayerNorm it first writes the gain and offset of every column.
 //
-// Vectors come from python/gen_deit_forward.py, in python/vectors/deit_forward:
+// Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, a file, b file or "-",
 //                      y file, descriptor file, two more files or "-"
 //   a, b, y            INT8 rows x cols, row-major
@@ -24,7 +24,7 @@
 module tb_matmul_engine_nonlinear #(
     parameter int    SYS_ROW    = vit_config_pkg::SYS_ROW,
     parameter int    SYS_COL    = vit_config_pkg::SYS_COL,
-    parameter string VECTOR_DIR = "../../python/vectors/deit_forward/"
+    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
 );
 
     import vit_config_pkg::descriptor_t;

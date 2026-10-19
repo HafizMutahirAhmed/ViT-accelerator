@@ -8,7 +8,7 @@
 // valid_in dropping now and then, and every valid output is compared with the
 // golden INT8 tensor.
 //
-// Vectors come from python/gen_deit_forward.py, in python/vectors/deit_forward:
+// Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, a file, b file, y file,
 //                      descriptor file, two more files or "-"
 //   a, b, y            INT8 rows x cols, row-major
@@ -18,7 +18,7 @@
 
 module tb_residual_add #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../../python/vectors/deit_forward/"
+    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
 );
 
     import vit_config_pkg::descriptor_t;

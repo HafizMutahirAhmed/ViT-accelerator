@@ -11,7 +11,9 @@ INPUT_OFFSET.
 
 The run list (after the loads, also part of the image) is what RUN works
 through: LOAD the descriptors, then per phase a LOAD per load of
-program_loads.txt (the input image from INPUT_OFFSET) and a START.
+program_loads.txt (the input image from INPUT_OFFSET) and a START. A program
+longer than the descriptor memory gets its descriptors phase by phase instead
+(run_image.Program.descriptor_blocks), each before its phase's START.
 
 A 64-byte signature at SIGNATURE_OFFSET (a magic word, the SHA-256 of the
 image and its length) says which image the DDR holds, so a second run on the
@@ -59,9 +61,17 @@ class DdrImage:
               b"".join(descriptors[i:i + 20] + bytes(4) for i in range(0, len(descriptors), 20)))
 
         # the run list
-        kind, offset, length = self.placements[DESCRIPTOR_FILE]
-        entries = [protocol.load_entry(kind, 0, 0, offset, length)]
+        descriptor_kind, descriptor_offset, _length = self.placements[DESCRIPTOR_FILE]
+        blocks = program.descriptor_blocks()
+
+        def descriptors(phase):
+            return [protocol.load_entry(descriptor_kind, 0, first % protocol.DESCRIPTOR_SLOTS,
+                                        descriptor_offset + 24 * first, 24 * count)
+                    for block_phase, first, count in blocks if block_phase == phase]
+
+        entries = descriptors(None)
         for phase, first, _count in program.phases:
+            entries += descriptors(phase)
             for load_phase, load_kind, target, base, _words, file_name in program.loads:
                 if load_phase != phase:
                     continue
@@ -70,7 +80,7 @@ class DdrImage:
                 else:
                     kind, offset, length = self.placements[file_name]
                 entries.append(protocol.load_entry(kind, target, base, offset, length))
-            entries.append(protocol.start_entry(first))
+            entries.append(protocol.start_entry(first % protocol.DESCRIPTOR_SLOTS))
         self.entries = entries
         image += bytes(-len(image) % ALIGN)
         self.list_offset = IMAGE_OFFSET + len(image)

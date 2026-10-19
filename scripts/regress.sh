@@ -10,7 +10,7 @@ jobs=${1:-4}
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 runs=(
-    "matmul_engine_deit224"
+    "matmul_engine_opal_kelly"
     "matmul_engine_chain SYS_ROW=4 SYS_COL=4"
     "matmul_engine_chain SYS_ROW=8 SYS_COL=8"
     "matmul_engine SYS_ROW=4 SYS_COL=4"
@@ -30,11 +30,10 @@ runs=(
     "softmax"
     "matmul_engine_nonlinear"
     "encoder_program"
-    "encoder_program_mnist112"
-    "nexys_top_mnist112"
-    "axi_replay_mnist112"
-    "axi_replay_ddr_mnist112"
-    "axi_replay_run_mnist112"
+    "encoder_program_nexys"
+    "axi_replay_step"
+    "axi_replay_run"
+    "axi_replay_run_nexys_L6"
     "nexys_top_ddr"
 )
 

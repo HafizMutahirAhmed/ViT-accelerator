@@ -1,6 +1,6 @@
 """The whole forward pass as one descriptor program for matmul_engine.
 
-build() takes a finished Forward (gen_deit_forward.py) and lays its ops out on
+build() takes a finished Forward (golden_model.py) and lays its ops out on
 the buffer pool: which buffer every tensor lives in, the descriptor of every
 op, and what the host has to write before each phase. Nothing is copied
 between ops: an op names the buffer an earlier op wrote.
@@ -30,6 +30,16 @@ larger than W on their own is split into column chunks of equal size, each a
 matmul that writes its columns into the same output tensor. A new phase also
 starts at the embedding, at each layer and at the final LayerNorm. With a
 weight buffer as deep as one layer's weights there is one phase per layer.
+
+Descriptor memory. The descriptors are numbered through the whole program
+(the entry), and entry e lives in slot e mod DESCRIPTOR_COUNT: the sequencer's
+index wraps the same way. A program of at most DESCRIPTOR_COUNT entries is
+loaded once; a longer one phase by phase, before each START (the host and the
+run list do that), which only needs every phase to fit.
+
+LayerNorm constants. The LayerNorms of a section (a layer's two, or the final
+one) are loaded with its first phase, behind the previous section's; when they
+would run past the end of the constants memory they start again at 0.
 
 Files written to the output directory:
   program_desc.hex     every descriptor, 5 words each, entry 0 first
@@ -125,7 +135,8 @@ def build(forward, stage_file, out_dir, plan=None):
     program = Program(plan)
     by_name = {op["name"]: op for op in forward.matmuls + forward.row_ops}
     state = {"phase": None, "section": None, "index": 0, "first": 0, "weight_end": 0, "bias_end": 0,
-             "weights": None, "biases": None}
+             "weights": None, "biases": None, "layernorm_end": 0}
+    layernorm_base = {}       # LayerNorm name -> first word of its gain and offset in the constants memory
 
     # --- phases ---------------------------------------------------------------
     def close_phase():
@@ -250,7 +261,7 @@ def build(forward, stage_file, out_dir, plan=None):
             row_tiles=tiles(rows), col_tiles=0,
             activation_buffer_id=a_buffer, weight_buffer_id=b_buffer, output_buffer_id=out_buffer,
             activation_base=a_base, weight_base=b_base, output_base=out_base, output_stride=length,
-            bias_base=op["bias_base"], scale=op.get("scale", 0), shift=op.get("shift", 0),
+            bias_base=layernorm_base.get(name, op["bias_base"]), scale=op.get("scale", 0), shift=op.get("shift", 0),
             drain_mode=0, bias_enable=0, last_op=0))
         program.ops.append(dict(phase=state["phase"], name=name, kind=op["kind"], buffer=out_buffer, layout="row",
                                 base=out_base, stride=length, rows=rows, cols=length,
@@ -258,13 +269,18 @@ def build(forward, stage_file, out_dir, plan=None):
 
     def layernorm_load(names):
         """The gain and offset of a section's LayerNorms, loaded with its first phase."""
-        base = min(by_name[name]["bias_base"] for name in names)
         words = []
         for name in names:
-            assert by_name[name]["bias_base"] == base + len(words)
             constants = forward.constants[name]
+            layernorm_base[name] = len(words)
             words += [((int(offset) & 0xFFFFFFFF) << 16) | (int(gain) & 0xFFFF)
                       for gain, offset in zip(constants["gain"], constants["offset"])]
+        depth = PARAMS["LAYERNORM_CONSTANT_DEPTH"]
+        assert len(words) <= depth
+        base = state["layernorm_end"] if state["layernorm_end"] + len(words) <= depth else 0
+        for name in names:
+            layernorm_base[name] += base
+        state["layernorm_end"] = base + len(words)
         file_name = f"{state['phase']}_layernorm_image.hex"
         program.files[file_name] = (words, 48)
         program.loads.append((state["phase"], "layernorm", 0, base, len(words), file_name))
@@ -283,7 +299,8 @@ def build(forward, stage_file, out_dir, plan=None):
     row_op("position_add", N, 0, X, 0, b_buffer=K, b_base=0)
 
     # --- the encoder layers ------------------------------------------------------
-    layers = sorted({name[:2] for name in by_name if name.startswith("L")})
+    layers = [f"L{index}" for index in sorted({int(name.split("_")[0][1:]) for name in by_name
+                                               if name[0] == "L" and name.split("_")[0][1:].isdigit()})]
     for layer in layers:
         open_phase(layer)
         layernorm_load([f"{layer}_ln1", f"{layer}_ln2"])
@@ -323,7 +340,7 @@ def build(forward, stage_file, out_dir, plan=None):
             out_base += tiles(op["a"].shape[0]) * op["b"].shape[1]
     close_phase()
 
-    assert len(program.descriptors) <= PARAMS["DESCRIPTOR_COUNT"]
+    assert all(count <= PARAMS["DESCRIPTOR_COUNT"] for _name, _first, count in program.phases)
     assert program.bias_used <= PARAMS["BIAS_DEPTH"]
 
     # --- files ------------------------------------------------------------------------
@@ -365,8 +382,9 @@ def build(forward, stage_file, out_dir, plan=None):
 
 def summary(program):
     plan = program.plan
-    lines = [f"descriptor program: {plan.tokens} tokens, {len(program.descriptors)} of {PARAMS['DESCRIPTOR_COUNT']} "
-             f"entries in {len(program.phases)} phases: "
+    lines = [f"descriptor program: {plan.tokens} tokens, {len(program.descriptors)} entries "
+             f"({'loaded once' if len(program.descriptors) <= PARAMS['DESCRIPTOR_COUNT'] else 'loaded per phase'}, "
+             f"{PARAMS['DESCRIPTOR_COUNT']} slots) in {len(program.phases)} phases: "
              + ", ".join(f"{name} at {first} ({count})" for name, first, count in program.phases),
              f"bias store: {program.bias_used} of {PARAMS['BIAS_DEPTH']} words per bank used"]
     for buffer_id, name in enumerate(BUFFER_NAMES):

@@ -18,6 +18,8 @@ MAX_ITEMS = 4096          # items per packet; the protocol allows 65,535
 KIND_POOL, KIND_BIAS, KIND_LAYERNORM, KIND_DESCRIPTOR = 0, 1, 2, 3
 DDR_ITEM_BYTES = {KIND_POOL: 8, KIND_BIAS: 32, KIND_LAYERNORM: 8, KIND_DESCRIPTOR: 24}
 DDR_BYTES = 128 << 20     # the Nexys A7's DDR2
+DESCRIPTOR_SLOTS = 256    # entries of the descriptor memory (DESCRIPTOR_COUNT in rtl/core/vit_config_pkg.sv)
+DESCRIPTOR_BYTES = 20     # one descriptor as WRITE_DESCRIPTOR sends it
 # run list entries (docs/HOST_PROTOCOL.md): 16 bytes, four 32-bit words
 ENTRY_LOAD, ENTRY_START = 1, 2
 ENTRY_BYTES = 16

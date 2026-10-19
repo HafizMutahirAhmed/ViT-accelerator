@@ -29,7 +29,7 @@ for f in "$root"/rtl/core/*.sv "$root"/rtl/interface/*.sv "$root"/rtl/interface/
 done
 
 mkdir -p "$root/sim/sim_dma_ip"
-ln -sfn ../../rtl/rom/deit224 "$root/sim/sim_dma_ip/rom"
+ln -sfn ../../rtl/rom/opal_kelly "$root/sim/sim_dma_ip/rom"
 ln -sfn ../rtl/rom "$root/sim/rom"
 cd "$root/sim/sim_dma_ip"
 

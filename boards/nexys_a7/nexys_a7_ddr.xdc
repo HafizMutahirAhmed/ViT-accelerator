@@ -1,13 +1,16 @@
 ## Constraints of boards/nexys_a7/nexys_top_ddr.sv on the Digilent Nexys A7-100T.
 ##
 ## Every pin line below is a line of Digilent's Nexys-A7-100T-Master.xdc,
-## uncommented, with only the port name in get_ports renamed to the top's port;
-## the source is the one boards/nexys_a7/nexys_a7.xdc names:
+## uncommented, with only the port name in get_ports renamed to the top's port:
 ##   source  https://github.com/Digilent/digilent-xdc/blob/7583b4e7a6b8178afdb7f9e07f18162c48a89b0d/Nexys-A7-100T-Master.xdc
+##   commit  7583b4e7a6b8178afdb7f9e07f18162c48a89b0d (2024-04-15), the last
+##           commit to touch the file; repository master c8644a9fe31c
+##   sha256  40b8d2b557673d90fbb20018210e4e3460c52e071696edaebd4b6ad5b00599e2
 ## Renamed: CLK100MHZ (kept), CPU_RESETN -> ck_rst, UART_TXD_IN -> uart_txd_in,
 ##          UART_RXD_OUT -> uart_rxd_out, LED[0..4] -> led[0..4].
-## Differences from nexys_a7.xdc: LED[4] is used (DDR2 calibrated), and the
-## master's create_clock line for CLK100MHZ is left out, because the clocking
+## UART names are from the USB-UART bridge's point of view: the FPGA receives
+## on uart_txd_in (C4) and transmits on uart_rxd_out (D4).
+## The master's create_clock line for CLK100MHZ is left out, because the clocking
 ## wizard (system_clock_generator) constrains its input clock itself.
 ## The DDR2 pins are not here: the MIG sets them from boards/nexys_a7/mig_ddr2.prj.
 

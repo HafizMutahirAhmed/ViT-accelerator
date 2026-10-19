@@ -20,7 +20,7 @@
 // entry, then CLEAR. Every response byte must equal the model's; no received
 // byte may be lost (LED 3) and the error LED (LED 2) must stay off.
 //
-// Vectors: python/vectors/mnist112/host_stream_ddrcheck_tx.hex, _rx.hex,
+// Vectors: python/models/nexys_L2/host_stream_ddrcheck_tx.hex, _rx.hex,
 // _packets.txt (scripts/gen_vectors.sh).
 //
 // sim.sh: also compile ../boards/nexys_a7/uart_rx.sv
@@ -31,7 +31,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_nexys_top_ddr #(
-    parameter string VECTOR_DIR = "../../python/vectors/mnist112/"
+    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
 );
 
     localparam int CLOCKS_PER_BIT   = 8;

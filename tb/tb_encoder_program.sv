@@ -20,17 +20,17 @@
 // back through the host port. Every stage prints PASS or FAIL with its name
 // and the first mismatching index.
 //
-// Vectors come from python/gen_deit_forward.py (python/layer_program.py), in
-// python/vectors/deit_forward: program_desc.hex, program_phases.txt,
+// Vectors come from python/make_model.py --board opal_kelly --layers 2 (python/layer_program.py), in
+// python/models/opal_kelly_L2: program_desc.hex, program_phases.txt,
 // program_ops.txt, program_loads.txt, the *_image.hex files and one golden
 // tensor per stage. The pool buffers have exactly the planned depths, which
 // are parameters here together with the vector directory and the ROM images,
-// so a wrapper can run another model configuration (tb_encoder_program_mnist112).
+// so a wrapper can run another model configuration (tb_encoder_program_nexys).
 // 8x8 only.
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb_encoder_program #(
-    parameter string VECTOR_DIR     = "../../python/vectors/deit_forward/",
+    parameter string VECTOR_DIR     = "../../python/models/opal_kelly_L2/",
     // words per bank of pool buffers 0 .. 7: the plan in python/layer_program.py,
     // which the generator also writes to program_plan.txt
     parameter int    DEPTH_X        = 4800,

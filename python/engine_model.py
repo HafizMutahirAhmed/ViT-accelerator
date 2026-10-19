@@ -99,7 +99,7 @@ class EngineModel:
                 cycles += nonlinear_cycles(kind, rows, cols, LANES)
             if d["last_op"]:
                 return cycles
-            entry += 1
+            entry = (entry + 1) % len(self.descriptors)     # the sequencer's index wraps the same way
 
 
 class ModelDevice:

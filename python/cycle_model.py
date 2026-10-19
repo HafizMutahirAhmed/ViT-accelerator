@@ -1,7 +1,7 @@
-"""Cycle model of matmul_engine, checked against a tb_matmul_engine_deit224 log.
+"""Cycle model of matmul_engine, checked against a tb_matmul_engine_opal_kelly log.
 
-Usage: python3 python/cycle_model.py [sim/sim_matmul_engine_deit.log]
-       python3 python/cycle_model.py --program [sim/sim_encoder_program.log [vector directory name]]
+Usage: python3 python/cycle_model.py [sim/sim_matmul_engine_opal_kelly.log]
+       python3 python/cycle_model.py --program [sim/sim_encoder_program.log [model name, e.g. nexys_L2]]
        --program models the whole descriptor program of python/layer_program.py,
        entry by entry, and checks it against a tb_encoder_program log.
 
@@ -16,7 +16,7 @@ For one op on an S_ROW x S_COL array:
            + 2 + REQUANTIZE_LATENCY    drain pipeline
            + POOL_WRITE_LATENCY        pool write register
 The latencies come from rtl/core/vit_config_pkg.sv. The ops are the real DeiT-Tiny
-ops listed in python/vectors/deit/deit_ops.txt.
+ops listed in python/models/opal_kelly_L2/matmuls/deit_ops.txt.
 
 The non-linear ops (residual add, GELU, LayerNorm, softmax) are row ops of the
 engine: SYS_ROW rows are processed together and each pass over a row tile
@@ -46,7 +46,8 @@ import sys
 
 from pkg_config import PARAMS, unpack_descriptor
 
-VEC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors", "deit")
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+VEC_DIR = os.path.join(MODELS_DIR, "opal_kelly_L2", "matmuls")
 
 
 def op_cycles(rows, inner, cols, column_select, sys_row, sys_col):
@@ -106,9 +107,9 @@ def load_ops():
 ROW_KINDS = {1: "add", 2: "gelu", 3: "layernorm", 4: "softmax"}
 
 
-def program_main(log_name, directory="deit_forward"):
+def program_main(log_name, directory="opal_kelly_L2"):
     """The descriptor program, entry by entry, against a tb_encoder_program log."""
-    forward_dir = os.path.join(os.path.dirname(VEC_DIR), directory)
+    forward_dir = os.path.join(MODELS_DIR, directory)
     with open(os.path.join(forward_dir, "program_desc.hex")) as f:
         words = [int(line, 16) for line in f]
     count = PARAMS["DESCRIPTOR_WORDS"]

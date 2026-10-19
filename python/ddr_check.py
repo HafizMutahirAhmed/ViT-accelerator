@@ -7,7 +7,9 @@ Usage:
   python3 python/ddr_check.py --model --bytes 4096 --record     byte stream for the testbenches
 
   --bytes N   bytes of the DDR write/read test, a multiple of 8, default 65536
-  --record    with --model: write every byte sent and received to the program
+  --model-dir DIR  where --model finds the board's buffer depths and ROMs and --record
+              writes, default python/models/nexys_L2
+  --record    with --model: write every byte sent and received to the model
               directory as host_stream_ddrcheck_tx.hex, _rx.hex and _packets.txt
               (the format of run_image.py --record), and _summary.txt (what the
               RUNs of steps 5 and 6 move, as run_image.py --run --record writes
@@ -20,8 +22,9 @@ Steps, each printed with PASS or FAIL and the first mismatch index:
      8- but not 64-byte aligned, 2048 items across 4 KiB pages into buffer 1,
      then READ_BUFFER each region back
   4  DMA_LOAD into the bias store, the LayerNorm constants and the descriptor
-     memory; these cannot be read back, so only the response is checked (a DMA
-     error or timeout answers with the memory status)
+     memory, and WRITE_BIAS and WRITE_LAYERNORM straight from the host; these
+     cannot be read back, so only the response is checked (a DMA error or
+     timeout answers with the memory status)
   5  RUN of a run list in DDR with three LOAD entries into pool buffers, then
      READ_BUFFER each region back; the RUN must answer 0 busy cycles (no START)
   6  RUN of a list whose second entry has an unknown kind: the RUN must be
@@ -112,6 +115,13 @@ def check(link, total_bytes, rng, run_entries):
         except protocol.ProtocolError as error:
             print(f"  {'4 DMA_LOAD ' + str(length) + ' bytes to the ' + name:44s} FAIL  {error}")
             passed = False
+    try:
+        link.write(protocol.WRITE_BIAS, 0, 7, rng.integers(0, 256, 32 * 3, dtype=np.uint8).tobytes())
+        link.write(protocol.WRITE_LAYERNORM, 0, 40, rng.integers(0, 256, 6 * 9, dtype=np.uint8).tobytes())
+        print(f"  {'4 WRITE_BIAS, WRITE_LAYERNORM from the host':44s} PASS  answered OK")
+    except protocol.ProtocolError as error:
+        print(f"  {'4 WRITE_BIAS, WRITE_LAYERNORM from the host':44s} FAIL  {error}")
+        passed = False
     # step 5: a run list of three LOADs; the bridge fetches and runs them by itself
     transfers = [(2, 10, 16), (3, 0, 300), (0, 1000, 7)]
     entries, payloads, data_offset = [], [], RUN_OFFSET + 4096
@@ -168,7 +178,7 @@ def main():
     parser.add_argument("--model", action="store_true")
     parser.add_argument("--bytes", type=int, default=65536)
     parser.add_argument("--record", action="store_true")
-    parser.add_argument("--program", default=os.path.join(HOST_DIR, "vectors", "mnist112"))
+    parser.add_argument("--model-dir", default=os.path.join(HOST_DIR, "models", "nexys_L2"))
     args = parser.parse_args()
     if (args.port is None) == (not args.model):
         parser.error("give --port or --model")
@@ -178,7 +188,7 @@ def main():
     if args.model:
         import engine_model
         from run_image import Program
-        program = Program(args.program)
+        program = Program(args.model_dir)
         link = protocol.HostLink(engine_model.ModelDevice(program.depths, os.path.join(
             REPO_DIR, program.config["rom_dir"]), memory=True))
     else:
@@ -196,7 +206,7 @@ def main():
         passed = False
 
     if args.record:
-        prefix = os.path.join(args.program, "host_stream_ddrcheck_")
+        prefix = os.path.join(args.model_dir, "host_stream_ddrcheck_")
         with open(prefix + "tx.hex", "w") as tx, open(prefix + "rx.hex", "w") as rx, \
                 open(prefix + "packets.txt", "w") as packets:
             for packet, response in link.record:
