@@ -1,11 +1,94 @@
-# Opal Kelly XEM7310-A200
+# Opal Kelly XEM7310-A200: how to run the full 224 x 224 model
 
-Not built yet. This directory will hold what is specific to the board, and
-nothing else: the top level, the FrontPanel adapter that turns pipes into the
-byte stream of [docs/HOST_PROTOCOL.md](../../docs/HOST_PROTOCOL.md), the
-constraints and the build script. The accelerator behind it is the one in
-`rtl/core` and `rtl/interface`, unchanged.
+**Not built.** The Nexys A7-100T (`boards/nexys_a7/`) is the finished board,
+with 112 x 112 MNIST digits. This page is for whoever takes the design to the
+XEM7310-A200 (Artix-7 XC7A200T, 1 GiB DDR3, USB 3.0 FrontPanel) to run the
+real DeiT-Tiny input size, 224 x 224 (197 tokens), on ImageNet photos.
 
-Opal Kelly's FrontPanel HDL (`okHost`, `okLibrary`, the pipes) and its
-simulation models are proprietary. They are not kept in this repository;
-the build will take them from a FrontPanel SDK installed outside it.
+## What already exists and is tested
+
+| Part | State |
+|---|---|
+| The engine (`rtl/core`) at 224 x 224 | simulated bit-exact: `tb_encoder_program` (the whole 2-layer program, 197 tokens), `tb_matmul_engine_opal_kelly` (all 39 matmuls), the non-linear unit testbenches |
+| The model files | `python/make_model.py --board opal_kelly --layers N`, any N from 1 to 12 |
+| The tables of all 12 layers | `rtl/rom/opal_kelly/` (in the repo) |
+| The scales | `python/calibration/opal_kelly_scales.json` (in the repo) |
+| The bridge, `RUN`, the AXI DMA path | `rtl/interface`, tested on the Nexys and against Xilinx's AXI DMA |
+| The host protocol | `docs/HOST_PROTOCOL.md`, the same on every board |
+
+The engine needs no change. Everything below is board work.
+
+## Why 224 cannot run on the Nexys
+
+The weights live in DDR, but the activations (Q, K, V, the 197 x 197
+attention scores, the MLP hidden layer) live in the engine's block RAM, and
+their size follows the token count. The 224 configuration needs about 330 of
+the XC7A100T's 135 block RAM tiles; the XC7A200T has 365. Run
+`make_model.py --board opal_kelly` and it prints how much of each buffer the
+program uses.
+
+## Steps
+
+1. **Make the model.**
+   ```sh
+   scripts/fetch_images.sh                      # ImageNet sample photos, once
+   .venv/bin/python python/make_model.py --board opal_kelly --layers 2
+   ```
+   It writes `python/models/opal_kelly_L2/`. The classifier is the model's own
+   1000-class ImageNet head; no training is needed.
+
+2. **The top level**, `boards/opal_kelly/opal_kelly_top.sv`. Start from
+   `boards/nexys_a7/nexys_top_ddr.sv` and change:
+   - the pool depths to the `opal_kelly` entry of `BOARDS` in
+     `python/make_model.py` (4800, 55296, 19200, 4800, 14775, 9528, 4800, 16);
+   - the ROM files to `../rom/opal_kelly/...`;
+   - the transport: replace `uart_rx` and `uart_tx` with a FrontPanel adapter
+     that turns a pipe-in and a pipe-out into the byte stream
+     `accelerator_system` takes (`rx_data`/`rx_valid`/`rx_ready`,
+     `tx_data`/`tx_valid`/`tx_ready`). Opal Kelly's FrontPanel HDL (`okHost`,
+     the pipes) is proprietary: take it from an installed FrontPanel SDK, do
+     not copy it into the repo;
+   - the clocks and resets for the XEM7310's oscillator.
+
+3. **The memory system.** `scripts/create_memory_system_bd.tcl` builds MIG +
+   AXI DMA + SmartConnect for the Nexys. Copy it and replace the MIG
+   configuration with the XEM7310's DDR3 one (Opal Kelly publishes the MIG
+   settings for the board). The DMA, SmartConnect and the address map
+   (DMA at 0x4040_0000, DDR at 0x8000_0000) can stay. The weights do not
+   grow with the image size: 2 layers take about 1.3 MB of DDR, 12 layers
+   about 6 MB, far below the 128 MiB `python/protocol.py` assumes (`DDR_BYTES`).
+
+4. **Constraints.** Pins from Opal Kelly's XEM7310 constraint file, as the
+   Nexys's come from Digilent's (`boards/nexys_a7/nexys_a7_ddr.xdc` shows the
+   style: copied lines, the source and its checksum in the header).
+
+5. **Build script.** Copy `scripts/create_nexys_ddr_project.tcl` and
+   `scripts/build_nexys_ddr.tcl`; part `xc7a200tfbg484-1`.
+
+6. **Host software.**
+   - `python/transports.py`: a FrontPanel transport, a class with
+     `write(bytes)` and `read(count)` like `SerialTransport`.
+   - `python/run_image.py` is written for the Nexys and MNIST digits. For
+     ImageNet photos, prepare the image with `golden_model.load_image`
+     (resize, centre crop, normalise), then `preprocess.im2col`, and take the
+     answer as the argmax of `head1000` instead of summing patch rows.
+     `ddr_image.py`, `protocol.py` and the `RUN` flow work unchanged.
+
+7. **Test before the board.**
+   - `scripts/regress.sh`: the 224 engine tests must still pass.
+   - A testbench of the new top through its pins, like
+     `tb/tb_nexys_top_ddr.sv`, and a replay of the host's byte stream, like
+     `tb/tb_axi_replay_run.sv` with the opal_kelly model and depths.
+   - The build must meet timing (`WNS` and `WHS` at least 0). The engine alone
+     reached about 150 MHz on this chip out of context.
+
+## Things to watch
+
+- **Block RAM is tight**: about 330 of 365 tiles before the memory system.
+  The MIG and the DMA need a few more; check the utilization report early.
+- **Time per image**: about 1.84 million engine cycles per layer at 197
+  tokens (`python/cycle_model.py --program`), 18 ms at 100 MHz; 2 layers with
+  the embedding and the head take 4.19 million cycles, 42 ms.
+- **Accuracy**: the model's own head only gives sensible ImageNet answers
+  with all 12 layers; with fewer layers, compare against the FP32 model of the
+  same depth (`make_model.py --report` does that).
