@@ -64,7 +64,9 @@ vivado -mode batch -source scripts/build_nexys_ddr.tcl
 `build_nexys_ddr.tcl` writes the reports to `build/nexys_a7_ddr_reports/` and
 prints WNS and WHS; both must be 0 or more. Program the device (**Open Hardware
 Manager > Open Target > Auto Connect > Program Device**) with
-`build/nexys_a7_ddr_project/nexys_a7_ddr.runs/impl_1/nexys_top_ddr.bit`.
+`build/nexys_top_ddr.bit`, where the batch build copies it (a GUI build leaves it
+in `build/nexys_a7_ddr_project/nexys_a7_ddr.runs/impl_1/`). The project and the
+reports can be deleted afterwards; the scripts make them again.
 
 ## Run
 

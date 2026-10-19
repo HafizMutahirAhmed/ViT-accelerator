@@ -4,8 +4,8 @@
 #   vivado -mode batch -source scripts/create_nexys_ddr_project.tcl
 #   vivado -mode batch -source scripts/build_nexys_ddr.tcl
 #
-# JOBS parallel runs (default 4). The bitstream is
-# build/nexys_a7_ddr_project/nexys_a7_ddr.runs/impl_1/nexys_top_ddr.bit.
+# JOBS parallel runs (default 4). The bitstream is copied to build/nexys_top_ddr.bit,
+# the file to program the board with; the project can be deleted after that.
 
 set script_dir [file dirname [file normalize [info script]]]
 set repo_dir   [file dirname $script_dir]
@@ -37,4 +37,6 @@ report_cdc -file [file join $report_dir cdc.txt]
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 set whs [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -hold]]
 puts "build_nexys_ddr: WNS $wns ns, WHS $whs ns, reports in $report_dir"
-puts "build_nexys_ddr: bitstream [file join [get_property DIRECTORY [get_runs impl_1]] nexys_top_ddr.bit]"
+file copy -force [file join [get_property DIRECTORY [get_runs impl_1]] nexys_top_ddr.bit] \
+    [file join $repo_dir build nexys_top_ddr.bit]
+puts "build_nexys_ddr: bitstream [file join $repo_dir build nexys_top_ddr.bit]"
