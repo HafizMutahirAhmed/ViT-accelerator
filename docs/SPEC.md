@@ -143,7 +143,43 @@ waits. The host issues loads only between phases, as now.
 | `WRITE_DDR` | writes the payload into DDR from an address, once per session |
 | `READ_DDR` | reads DDR back, for checks |
 | `DMA_LOAD` | sets STREAM_TARGET and STREAM_ADDRESS, starts MM2S from a DDR address for a byte count, waits for the DMA to finish |
+| `RUN` | runs a list of steps from DDR by itself (below) and answers when the list is done |
 | `DMA_STORE` | optional, not built: a pool buffer range to DDR through S2MM |
+
+### Run list (`RUN`)
+
+With `DMA_LOAD` the host still sends every step of a run: about 30 loads and
+13 starts, each a round trip over the UART. `RUN` moves that sequencing into
+the bridge. The host writes a **run list** into DDR once, with the weights; per
+image it writes the image into DDR and sends one `RUN`, then reads the scores.
+
+- **Entries.** 16 bytes each, four 32-bit words, least significant byte first:
+
+  | Word | `LOAD` (kind 1) | `START` (kind 2) |
+  |---|---|---|
+  | 0 | 7:0 kind; 15:8 target, as `DMA_LOAD`'s target byte | 7:0 kind |
+  | 1 | first address in the target memory | first descriptor entry |
+  | 2 | DDR byte offset | 0 |
+  | 3 | length in bytes | 0 |
+
+  `LOAD` does what `DMA_LOAD` does; `START` writes START_INDEX and CONTROL,
+  then reads STATUS until done (or the error bit, or a timeout) and adds
+  CYCLES to the run's total. Any other kind stops the run.
+- **`RUN` packet**: `address` = the list's DDR offset in 8-byte items,
+  `count` = the number of entries. A count instead of an end marker: the
+  controller never reads past the list. The response carries the total busy
+  cycles; a failed step stops the run and answers with the memory status (a
+  DMA or DDR error) or the new run status bit (a bad entry, an engine error, a
+  timeout).
+- **Controller**: states in `axi_host_bridge`, not a new block. It fetches an
+  entry with four reads on `m_system_axi` and runs it with the bridge's
+  existing `DMA_LOAD` and `START` register sequences.
+- **Why a list and not a fixed FSM**: the steps depend on the configuration
+  (layers, tokens, how the weights split into phases, DDR addresses), which
+  `python/layer_program.py` already works out. With a list a different program
+  needs no new bitstream.
+- The step-by-step flow stays: `--check` reads every stage back between the
+  phases, which `RUN` does not stop for.
 
 The existing commands keep working unchanged. [HOST_PROTOCOL.md](HOST_PROTOCOL.md)
 has the formats.
@@ -158,8 +194,11 @@ and `python/run_image.py --ddr` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
 2. **DMA loads.** AXI DMA, the stream mux, `DMA_LOAD`. `run_image.py` writes
    the DDR image once, then runs every phase with `DMA_LOAD` and START. The
    scores must equal the direct-load flow byte for byte.
-3. **DMA stores** (optional). The demux and `DMA_STORE`.
-4. **XEM7310.** The same blocks with DDR3 and FrontPanel; DeiT-224 on hardware.
+3. **Run list.** `RUN` and the run list in DDR; `run_image.py --run` sends
+   the image and one `RUN` per image. The scores must equal the step-by-step
+   flow byte for byte.
+4. **DMA stores** (optional). The demux and `DMA_STORE`.
+5. **XEM7310.** The same blocks with DDR3 and FrontPanel; DeiT-224 on hardware.
 
 ### Verification
 
@@ -185,6 +224,4 @@ configurations; the host software's byte stream is replayed against the RTL.
 
 ## Not in scope
 
-More than two encoder layers, training, a scatter-gather DMA, a soft CPU, and
-for now a hardware load table (an FSM that would run the phase loads from DDR
-without the host).
+More than two encoder layers, training, a scatter-gather DMA and a soft CPU.
