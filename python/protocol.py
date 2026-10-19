@@ -9,15 +9,29 @@ provide the same two methods.
 START_BYTE, RESPONSE_BYTE = 0xA5, 0x5A
 WRITE_BUFFER, WRITE_BIAS, WRITE_LAYERNORM, WRITE_DESCRIPTOR = 0x01, 0x02, 0x03, 0x04
 START, READ_BUFFER, STATUS, CLEAR = 0x05, 0x06, 0x07, 0x08
-WRITE_DDR, READ_DDR, DMA_LOAD = 0x09, 0x0A, 0x0B
+WRITE_DDR, READ_DDR, DMA_LOAD, RUN = 0x09, 0x0A, 0x0B, 0x0C
 ITEM_BYTES = {WRITE_BUFFER: 8, WRITE_BIAS: 32, WRITE_LAYERNORM: 6, WRITE_DESCRIPTOR: 20, WRITE_DDR: 8, DMA_LOAD: 8}
-STATUS_CHECKSUM, STATUS_COMMAND, STATUS_BUSY, STATUS_MEMORY = 1, 2, 4, 8
+STATUS_CHECKSUM, STATUS_COMMAND, STATUS_BUSY, STATUS_MEMORY, STATUS_RUN = 1, 2, 4, 8, 16
 FLAG_BUSY, FLAG_DONE, FLAG_ERROR, FLAG_MEMORY = 1, 2, 4, 8
 MAX_ITEMS = 4096          # items per packet; the protocol allows 65,535
 # DMA_LOAD targets: the STREAM_TARGET kinds of docs/AXI_REGISTER_MAP.md, and the bytes one item takes in DDR
 KIND_POOL, KIND_BIAS, KIND_LAYERNORM, KIND_DESCRIPTOR = 0, 1, 2, 3
 DDR_ITEM_BYTES = {KIND_POOL: 8, KIND_BIAS: 32, KIND_LAYERNORM: 8, KIND_DESCRIPTOR: 24}
 DDR_BYTES = 128 << 20     # the Nexys A7's DDR2
+# run list entries (docs/HOST_PROTOCOL.md): 16 bytes, four 32-bit words
+ENTRY_LOAD, ENTRY_START = 1, 2
+ENTRY_BYTES = 16
+
+
+def load_entry(kind, buffer_id, address, offset, length):
+    """A LOAD entry: the DMA copies `length` bytes from DDR byte `offset` into the memory of `kind`."""
+    words = (ENTRY_LOAD | (kind << 4 | buffer_id) << 8, address, offset, length)
+    return b"".join(word.to_bytes(4, "little") for word in words)
+
+
+def start_entry(first):
+    """A START entry: runs the descriptors from entry `first` and waits for done."""
+    return b"".join(word.to_bytes(4, "little") for word in (ENTRY_START, first, 0, 0))
 
 
 def crc16(data, crc=0xFFFF):
@@ -33,7 +47,9 @@ assert crc16(b"123456789") == 0x29B1
 
 
 class ProtocolError(Exception):
-    pass
+    def __init__(self, message, status=0):
+        super().__init__(message)
+        self.status = status      # the response's status bits, when the board refused the command
 
 
 class HostLink:
@@ -63,8 +79,9 @@ class HostLink:
                 return rest[:-2]
             if not status & STATUS_CHECKSUM:
                 reason = ("busy" if status & STATUS_BUSY else
-                          "memory not ready or DMA error" if status & STATUS_MEMORY else "unknown command")
-                raise ProtocolError(f"command {code:#04x} refused with status {status} ({reason})")
+                          "memory not ready or DMA error" if status & STATUS_MEMORY else
+                          "a run list step failed" if status & STATUS_RUN else "unknown command")
+                raise ProtocolError(f"command {code:#04x} refused with status {status} ({reason})", status)
             self.clear()
         raise ProtocolError(f"command {code:#04x}: checksum error {self.retries} times")
 
@@ -104,6 +121,11 @@ class HostLink:
         assert offset % 8 == 0 and length % DDR_ITEM_BYTES[kind] == 0 and length > 0
         self.command(DMA_LOAD, kind << 4 | buffer_id, address, 1,
                      offset.to_bytes(4, "little") + length.to_bytes(4, "little"))
+
+    def run(self, offset, entries):
+        """RUN: the bridge runs `entries` entries of the run list at DDR byte `offset`; returns the busy cycles."""
+        assert offset % 8 == 0 and 0 < entries < 65536
+        return int.from_bytes(self.command(RUN, 0, offset // 8, entries, response_bytes=4), "little")
 
     def start(self, entry):
         self.command(START, address=entry)

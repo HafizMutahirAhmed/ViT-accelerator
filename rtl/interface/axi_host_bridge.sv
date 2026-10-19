@@ -46,6 +46,22 @@
 //                    dma_stream_select is high from the first register write
 //                    to the response: the wrapper's s_axis then takes the
 //                    DMA's stream instead of m_axis
+//   RUN              runs `count` entries of the run list at DDR item `address`
+//                    (8-byte items; an entry is 16 bytes, four 32-bit words).
+//                    Per entry: four 32-bit reads on m_system_axi, then by the
+//                    kind in word 0 bits 7:0
+//                      1 LOAD   the DMA_LOAD sequence above, with target =
+//                               word 0 bits 15:8, address = word 1, DDR
+//                               offset = word 2, length = word 3
+//                      2 START  write START_INDEX = word 1 and CONTROL bit 0,
+//                               read STATUS until done (bit 1), then CYCLES,
+//                               added to the run's total
+//                    any other kind, the engine's error bit, an error response
+//                    from the wrapper or PHASE_TIMEOUT_CYCLES without done
+//                    stop the run with the run status bit; an error on
+//                    m_system_axi, a DMA error or timeout with the memory
+//                    bit. The response payload is the total busy cycles, 4
+//                    bytes. dma_stream_select is high for the whole run
 // The memory status bit also reports an error response on m_system_axi, a
 // DMA error and a DMA timeout. STATUS flag bit 3 is memory_ready.
 //
@@ -61,7 +77,8 @@ module axi_host_bridge #(
     parameter int          LITE_ADDRESS_WIDTH = 12,
     parameter logic [31:0] DMA_BASE_ADDRESS   = 32'h4040_0000,
     parameter logic [31:0] DDR_BASE_ADDRESS   = 32'h8000_0000,
-    parameter int          DMA_TIMEOUT_CYCLES = 1 << 24
+    parameter int          DMA_TIMEOUT_CYCLES   = 1 << 24,
+    parameter int          PHASE_TIMEOUT_CYCLES = 1 << 28
 ) (
     input  logic                          aclk,
     input  logic                          aresetn,
@@ -142,6 +159,11 @@ module axi_host_bridge #(
     localparam logic [7:0] COMMAND_WRITE_DDR        = 8'h09;
     localparam logic [7:0] COMMAND_READ_DDR         = 8'h0A;
     localparam logic [7:0] COMMAND_DMA_LOAD         = 8'h0B;
+    localparam logic [7:0] COMMAND_RUN              = 8'h0C;
+
+    // run list entry kinds
+    localparam logic [7:0] ENTRY_LOAD  = 8'd1;
+    localparam logic [7:0] ENTRY_START = 8'd2;
 
     // registers of vit_axi_core
     localparam logic [11:0] REG_CONTROL        = 12'h000;
@@ -159,9 +181,11 @@ module axi_host_bridge #(
     localparam logic [31:0] DMA_MM2S_LENGTH = 32'h28;
     localparam int          DMASR_IDLE      = 1;      // bit 1; bits 6:4 are the errors
     localparam int          DMA_POLL_STEP   = 5;      // step of the DMA_LOAD sequence that reads DMASR
+    localparam int          START_POLL_STEP = 2;      // step of a run's START that reads STATUS
 
     localparam int HEADER_BYTES = 7;     // command .. count
     localparam int STATUS_BYTES = 5;     // flags, 4 bytes of cycles
+    localparam int RUN_BYTES    = 4;     // RUN's payload: the total busy cycles
 
     // CRC-16/CCITT-FALSE, one byte
     function automatic logic [15:0] crc_next(input logic [15:0] crc, input logic [7:0] data);
@@ -173,7 +197,7 @@ module axi_host_bridge #(
         return value;
     endfunction
 
-    typedef enum logic [3:0] {
+    typedef enum logic [4:0] {
         STATE_IDLE,          // waiting for the start byte
         STATE_HEADER,
         STATE_BEFORE,        // register accesses before the payload
@@ -188,7 +212,11 @@ module axi_host_bridge #(
         STATE_SEND_PAYLOAD,
         STATE_SEND_CHECKSUM,
         STATE_DDR_WRITE,     // the two DDR writes of an item
-        STATE_DDR_READ       // the two DDR reads of an item
+        STATE_DDR_READ,      // the two DDR reads of an item
+        STATE_RUN_FETCH,     // RUN: the four reads of an entry
+        STATE_RUN_DECODE,    // RUN: the entry's fields to the registers of its sequence
+        STATE_RUN_ISSUE,     // RUN: the first access of the entry's sequence
+        STATE_RUN_NEXT       // RUN: an entry is done; the next one, or the response
     } state_t;
 
     logic reset;
@@ -196,9 +224,11 @@ module axi_host_bridge #(
 
     state_t      state;
     logic [7:0]  command;
+    logic [7:0]  operation;          // whose register sequence runs: the command, or a run entry's LOAD or START
     logic [2:0]  target;
     logic [1:0]  target_kind;        // DMA_LOAD: target bits 5:4
     logic        count_is_one;
+    logic        count_is_zero;
     logic [23:0] address;
     logic [15:0] items_left;
     logic [2:0]  header_index;
@@ -214,15 +244,23 @@ module axi_host_bridge #(
     logic        memory_rejected;    // the command needs the memory and it is not ready
     logic        memory_failed;      // an error response on m_system_axi, a DMA error or timeout
     logic        discard;            // the payload is consumed and dropped
-    logic [3:0]  status;
+    logic [4:0]  status;
     logic [15:0] send_crc;
     logic [2:0]  send_index;
     logic [63:0] read_item;
     logic [2:0]  step;               // register access of the running sequence
     logic [1:0]  ddr_phase;          // WRITE_DDR, READ_DDR: low word issued, done, high word issued, done
     logic        dma_last_seen;
-    localparam int DMA_TIMER_WIDTH = $clog2(DMA_TIMEOUT_CYCLES + 1);
-    logic [DMA_TIMER_WIDTH-1:0] dma_timer;
+    // one timer for the DMA and the engine: whichever the sequence waits for
+    localparam int WAIT_TIMEOUT_MAX = DMA_TIMEOUT_CYCLES > PHASE_TIMEOUT_CYCLES ? DMA_TIMEOUT_CYCLES
+                                                                                 : PHASE_TIMEOUT_CYCLES;
+    localparam int WAIT_TIMER_WIDTH = $clog2(WAIT_TIMEOUT_MAX + 1);
+    logic [WAIT_TIMER_WIDTH-1:0] wait_timer;
+    logic         run_active;         // a RUN is working through its list
+    logic [23:0]  run_pointer;        // DDR item of the next entry
+    logic [127:0] run_entry;
+    logic [2:0]   fetch_phase;        // even: issue a read of word fetch_phase / 2, odd: its response
+    logic [31:0]  run_cycles;
     logic        engine_busy;
     logic        engine_done;
     logic [31:0] engine_cycles;
@@ -255,13 +293,14 @@ module axi_host_bridge #(
                           || command == COMMAND_WRITE_LAYERNORM || command == COMMAND_WRITE_DESCRIPTOR;
     assign has_payload  = is_write || command == COMMAND_WRITE_DDR || command == COMMAND_DMA_LOAD;
     assign needs_memory = command == COMMAND_WRITE_DDR || command == COMMAND_READ_DDR
-                          || command == COMMAND_DMA_LOAD;
+                          || command == COMMAND_DMA_LOAD || command == COMMAND_RUN;
     assign needs_idle   = !(command == COMMAND_STATUS || command == COMMAND_CLEAR
                             || command == COMMAND_WRITE_DDR || command == COMMAND_READ_DDR);
     assign is_known     = is_write || command == COMMAND_START || command == COMMAND_READ_BUFFER
                           || command == COMMAND_STATUS || command == COMMAND_CLEAR
                           || command == COMMAND_WRITE_DDR || command == COMMAND_READ_DDR
-                          || (command == COMMAND_DMA_LOAD && count_is_one);
+                          || (command == COMMAND_DMA_LOAD && count_is_one)
+                          || (command == COMMAND_RUN && !count_is_zero);
     assign discard      = rejected || memory_rejected;
 
     assign rx_ready      = state == STATE_IDLE || state == STATE_HEADER || state == STATE_PAYLOAD
@@ -281,7 +320,7 @@ module axi_host_bridge #(
     logic [31:0] lite_data;
     logic        lite_active;
     logic        lite_done;          // one cycle: the response arrived
-    logic        lite_error;         // with lite_done: the response was not OKAY (m_system_axi only)
+    logic        lite_error;         // with lite_done: the response was not OKAY
     logic [31:0] lite_read_data;
 
     assign m_axi_bready        = lite_active && !lite_system;
@@ -343,7 +382,7 @@ module axi_host_bridge #(
             if (lite_active && !lite_system && (m_axi_bvalid || m_axi_rvalid)) begin
                 lite_active    <= 1'b0;
                 lite_done      <= 1'b1;
-                lite_error     <= 1'b0;
+                lite_error     <= m_axi_bvalid ? m_axi_bresp != 2'b00 : m_axi_rresp != 2'b00;
                 lite_read_data <= m_axi_rdata;
             end
             if (lite_active && lite_system && (m_system_axi_bvalid || m_system_axi_rvalid)) begin
@@ -388,11 +427,27 @@ module axi_host_bridge #(
             endcase
         end
         else begin
-            case (command)
+            case (operation)
                 COMMAND_START: begin
-                    sequence_address = 32'((step == 3'd0) ? REG_START_INDEX : REG_CONTROL);
-                    sequence_data    = (step == 3'd0) ? {8'b0, address} : 32'd1;
-                    sequence_last    = step == 3'd1;
+                    // a run's START also reads STATUS until done, then CYCLES
+                    case (step)
+                        3'd0: begin
+                            sequence_address = 32'(REG_START_INDEX);
+                            sequence_data    = {8'b0, address};
+                        end
+                        3'd1: begin
+                            sequence_address = 32'(REG_CONTROL);
+                            sequence_data    = 32'd1;
+                        end
+                        3'(START_POLL_STEP): begin
+                            sequence_write   = 1'b0;
+                        end
+                        default: begin
+                            sequence_write   = 1'b0;
+                            sequence_address = 32'(REG_CYCLES);
+                        end
+                    endcase
+                    sequence_last = !run_active && step == 3'd1;
                 end
                 COMMAND_CLEAR: begin
                     sequence_address = 32'(REG_CONTROL);
@@ -459,12 +514,24 @@ module axi_host_bridge #(
         end
     end
 
+    // the payload of STATUS, or of RUN (its first RUN_BYTES bytes)
     logic [7:0] status_bytes[STATUS_BYTES];
+    logic [2:0] status_last;            // index of the payload's last byte
 
     always_comb begin
-        status_bytes[0] = {4'b0, memory_ready, error_flag, engine_done, engine_busy};
-        for (int i = 0; i < 4; i++) begin
-            status_bytes[i+1] = engine_cycles[8*i +: 8];
+        if (command == COMMAND_RUN) begin
+            for (int i = 0; i < 4; i++) begin
+                status_bytes[i] = run_cycles[8*i +: 8];
+            end
+            status_bytes[4] = 8'h00;
+            status_last     = 3'(RUN_BYTES - 1);
+        end
+        else begin
+            status_bytes[0] = {4'b0, memory_ready, error_flag, engine_done, engine_busy};
+            for (int i = 0; i < 4; i++) begin
+                status_bytes[i+1] = engine_cycles[8*i +: 8];
+            end
+            status_last = 3'(STATUS_BYTES - 1);
         end
     end
 
@@ -489,6 +556,7 @@ module axi_host_bridge #(
             error_flag        <= 1'b0;
             dma_stream_select <= 1'b0;
             dma_last_seen     <= 1'b0;
+            run_active        <= 1'b0;
         end
         else begin
             lite_request <= 1'b0;
@@ -509,7 +577,10 @@ module axi_host_bridge #(
                     if (rx_valid) begin
                         receive_crc <= crc_next(receive_crc, rx_data);
                         case (header_index)
-                            3'd0: command           <= rx_data;
+                            3'd0: begin
+                                command   <= rx_data;
+                                operation <= rx_data;
+                            end
                             3'd1: begin
                                 target      <= rx_data[2:0];
                                 target_kind <= rx_data[5:4];
@@ -527,6 +598,7 @@ module axi_host_bridge #(
                             checksum_index <= 1'b0;
                             step           <= '0;
                             count_is_one   <= {rx_data, items_left[7:0]} == 16'd1;
+                            count_is_zero  <= {rx_data, items_left[7:0]} == 16'd0;
                             memory_failed  <= 1'b0;
                             lite_request   <= 1'b1;
                             lite_write     <= 1'b0;
@@ -651,11 +723,20 @@ module axi_host_bridge #(
                 end
 
                 STATE_EXECUTE: begin
-                    status   <= {(memory_rejected && is_known) || memory_failed, rejected && is_known,
+                    status   <= {1'b0, (memory_rejected && is_known) || memory_failed, rejected && is_known,
                                  !is_known, received_checksum != receive_crc};
                     send_crc <= 16'hFFFF;
                     step     <= '0;
-                    if (received_checksum == receive_crc && is_known && !discard && !has_payload
+                    if (received_checksum == receive_crc && is_known && !discard && command == COMMAND_RUN) begin
+                        // items_left counts the entries still to run
+                        run_active        <= 1'b1;
+                        run_pointer       <= address;
+                        run_cycles        <= '0;
+                        fetch_phase       <= '0;
+                        dma_stream_select <= 1'b1;
+                        state             <= STATE_RUN_FETCH;
+                    end
+                    else if (received_checksum == receive_crc && is_known && !discard && !has_payload
                         && command != COMMAND_READ_DDR
                         && !(command == COMMAND_READ_BUFFER && items_left == '0)
                         || received_checksum == receive_crc && is_known && !discard
@@ -672,7 +753,7 @@ module axi_host_bridge #(
                         if (command == COMMAND_DMA_LOAD) begin
                             dma_stream_select <= 1'b1;
                             dma_last_seen     <= 1'b0;
-                            dma_timer         <= DMA_TIMER_WIDTH'(DMA_TIMEOUT_CYCLES);
+                            wait_timer        <= WAIT_TIMER_WIDTH'(DMA_TIMEOUT_CYCLES);
                         end
                     end
                     else begin
@@ -680,26 +761,114 @@ module axi_host_bridge #(
                     end
                 end
 
-                STATE_AFTER: begin
-                    if (command == COMMAND_DMA_LOAD && dma_timer != '0) begin
-                        dma_timer <= dma_timer - 1'b1;
+                STATE_RUN_FETCH: begin
+                    // word fetch_phase / 2 of the entry at run_pointer
+                    if (!fetch_phase[0]) begin
+                        lite_request <= 1'b1;
+                        lite_write   <= 1'b0;
+                        lite_system  <= 1'b1;
+                        lite_address <= ddr_address(run_pointer + 24'(fetch_phase[2]), fetch_phase[1]);
+                        fetch_phase  <= fetch_phase + 1'b1;
                     end
-                    if (lite_done && command == COMMAND_DMA_LOAD) begin
+                    else if (lite_done) begin
+                        run_entry[32*fetch_phase[2:1] +: 32] <= lite_read_data;
+                        fetch_phase                          <= fetch_phase + 1'b1;
+                        if (lite_error) begin
+                            memory_failed <= 1'b1;
+                            status[3]     <= 1'b1;
+                            state         <= STATE_SEND_START;
+                        end
+                        else if (fetch_phase == 3'd7) begin
+                            state <= STATE_RUN_DECODE;
+                        end
+                    end
+                end
+
+                STATE_RUN_DECODE: begin
+                    // the fields go where the DMA_LOAD and START sequences take them from
+                    target       <= run_entry[10:8];
+                    target_kind  <= run_entry[13:12];
+                    address      <= run_entry[55:32];
+                    m_axis_tdata <= run_entry[127:64];
+                    run_pointer  <= run_pointer + 24'd2;
+                    items_left   <= items_left - 1'b1;
+                    step         <= '0;
+                    if (run_entry[7:0] == ENTRY_LOAD) begin
+                        operation     <= COMMAND_DMA_LOAD;
+                        dma_last_seen <= 1'b0;
+                        wait_timer    <= WAIT_TIMER_WIDTH'(DMA_TIMEOUT_CYCLES);
+                        state         <= STATE_RUN_ISSUE;
+                    end
+                    else if (run_entry[7:0] == ENTRY_START) begin
+                        operation  <= COMMAND_START;
+                        wait_timer <= WAIT_TIMER_WIDTH'(PHASE_TIMEOUT_CYCLES);
+                        state      <= STATE_RUN_ISSUE;
+                    end
+                    else begin
+                        status[4] <= 1'b1;
+                        state     <= STATE_SEND_START;
+                    end
+                end
+
+                STATE_RUN_ISSUE: begin
+                    // the registers DECODE wrote are in: the sequence's first access
+                    lite_request <= 1'b1;
+                    lite_write   <= sequence_write;
+                    lite_system  <= sequence_system;
+                    lite_address <= sequence_address;
+                    lite_data    <= sequence_data;
+                    state        <= STATE_AFTER;
+                end
+
+                STATE_RUN_NEXT: begin
+                    fetch_phase <= '0;
+                    state       <= (items_left == '0) ? STATE_SEND_START : STATE_RUN_FETCH;
+                end
+
+                STATE_AFTER: begin
+                    if (wait_timer != '0) begin
+                        wait_timer <= wait_timer - 1'b1;
+                    end
+                    if (lite_done && operation == COMMAND_DMA_LOAD) begin
                         if (lite_error) begin
                             memory_failed <= 1'b1;
                             status[3]     <= 1'b1;
                             state         <= STATE_SEND_START;
                         end
                         else if (step == 3'(DMA_POLL_STEP)) begin
-                            if (lite_read_data[6:4] != 3'b000 || dma_timer == '0) begin
+                            if (lite_read_data[6:4] != 3'b000 || wait_timer == '0) begin
                                 memory_failed <= 1'b1;
                                 status[3]     <= 1'b1;
                                 state         <= STATE_SEND_START;
                             end
                             else if (lite_read_data[DMASR_IDLE] && dma_last_seen) begin
-                                state <= STATE_SEND_START;
+                                state <= run_active ? STATE_RUN_NEXT : STATE_SEND_START;
                             end
                             // otherwise DMASR is read again, by the branch below
+                        end
+                        else begin
+                            step <= step + 1'b1;
+                        end
+                    end
+                    else if (lite_done && run_active) begin
+                        // a run's START: STATUS until done, then CYCLES
+                        if (lite_error) begin
+                            status[4] <= 1'b1;
+                            state     <= STATE_SEND_START;
+                        end
+                        else if (step == 3'(START_POLL_STEP)) begin
+                            if (lite_read_data[2] || wait_timer == '0) begin
+                                status[4] <= 1'b1;
+                                state     <= STATE_SEND_START;
+                            end
+                            else if (lite_read_data[1]) begin
+                                step <= step + 1'b1;
+                            end
+                            // otherwise STATUS is read again, by the branch below
+                        end
+                        else if (step == 3'(START_POLL_STEP + 1)) begin
+                            run_cycles <= run_cycles + lite_read_data;
+                            state      <= STATE_RUN_NEXT;
                         end
                         else begin
                             step <= step + 1'b1;
@@ -736,9 +905,10 @@ module axi_host_bridge #(
                     tx_valid          <= 1'b1;
                     tx_data           <= RESPONSE_START_BYTE;
                     dma_stream_select <= 1'b0;
+                    run_active        <= 1'b0;
                     if (tx_valid && tx_ready) begin
-                        tx_data  <= {4'b0, status};
-                        send_crc <= crc_next(send_crc, {4'b0, status});
+                        tx_data  <= {3'b0, status};
+                        send_crc <= crc_next(send_crc, {3'b0, status});
                         state    <= STATE_SEND_STATUS;
                         if (status != '0) begin
                             error_flag <= 1'b1;
@@ -759,7 +929,7 @@ module axi_host_bridge #(
                             ddr_phase <= 2'd0;
                             state     <= STATE_DDR_READ;
                         end
-                        else if (status == '0 && command == COMMAND_STATUS) begin
+                        else if (status == '0 && (command == COMMAND_STATUS || command == COMMAND_RUN)) begin
                             tx_data  <= status_bytes[0];
                             send_crc <= crc_next(send_crc, status_bytes[0]);
                             state    <= STATE_SEND_PAYLOAD;
@@ -820,8 +990,8 @@ module axi_host_bridge #(
                 STATE_SEND_PAYLOAD: begin
                     if (tx_ready) begin
                         send_index <= send_index + 1'b1;
-                        if (command == COMMAND_STATUS) begin
-                            if (send_index == 3'(STATUS_BYTES - 1)) begin
+                        if (command == COMMAND_STATUS || command == COMMAND_RUN) begin
+                            if (send_index == status_last) begin
                                 tx_data <= send_crc[7:0];
                                 state   <= STATE_SEND_CHECKSUM;
                             end

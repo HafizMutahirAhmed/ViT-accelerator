@@ -16,7 +16,8 @@
 // python/ddr_check.py --model --bytes 4096 --record over the UART: STATUS, a
 // DDR write and read-back, DMA_LOADs into pool buffers read back with
 // READ_BUFFER, DMA_LOADs into the bias store, the LayerNorm constants and the
-// descriptor memory. Every response byte must equal the model's; no received
+// descriptor memory, a RUN of three LOAD entries and a RUN refused for a bad
+// entry, then CLEAR. Every response byte must equal the model's; no received
 // byte may be lost (LED 3) and the error LED (LED 2) must stay off.
 //
 // Vectors: python/vectors/mnist112/host_stream_ddrcheck_tx.hex, _rx.hex,

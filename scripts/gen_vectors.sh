@@ -30,5 +30,7 @@ python3 "$root/python/gen_vectors.py"
 python3 "$root/python/run_image.py" --model --digit 0 --golden --clear --record
 # the same with the weights in DDR, for tb_axi_replay_ddr_mnist112
 python3 "$root/python/run_image.py" --model --digit 0 --golden --clear --ddr --record
+# the same with one RUN of the run list, for tb_axi_replay_run_mnist112
+python3 "$root/python/run_image.py" --model --digit 0 --golden --clear --run --record
 # the external-memory bring-up check, for tb_nexys_top_ddr and tb_dma_ip
 python3 "$root/python/ddr_check.py" --model --bytes 4096 --record

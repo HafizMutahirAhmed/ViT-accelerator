@@ -1,4 +1,4 @@
-"""Bring-up check of the external memory: the DDR alone, then the DMA into the engine.
+"""Bring-up check of the external memory: the DDR alone, then the DMA into the engine, then RUN.
 
 Usage:
   python3 python/ddr_check.py --port /dev/ttyUSB1               a board running nexys_top_ddr
@@ -9,8 +9,9 @@ Usage:
   --bytes N   bytes of the DDR write/read test, a multiple of 8, default 65536
   --record    with --model: write every byte sent and received to the program
               directory as host_stream_ddrcheck_tx.hex, _rx.hex and _packets.txt
-              (the format of run_image.py --record), for tb_nexys_top_ddr and
-              tb_dma_ip, which play them to the RTL
+              (the format of run_image.py --record), and _summary.txt (what the
+              RUNs of steps 5 and 6 move, as run_image.py --run --record writes
+              it), for tb_nexys_top_ddr and tb_dma_ip, which play them to the RTL
 
 Steps, each printed with PASS or FAIL and the first mismatch index:
   1  STATUS: the ddr flag (LED 4: the MIG has calibrated the DDR2) is set
@@ -21,6 +22,11 @@ Steps, each printed with PASS or FAIL and the first mismatch index:
   4  DMA_LOAD into the bias store, the LayerNorm constants and the descriptor
      memory; these cannot be read back, so only the response is checked (a DMA
      error or timeout answers with the memory status)
+  5  RUN of a run list in DDR with three LOAD entries into pool buffers, then
+     READ_BUFFER each region back; the RUN must answer 0 busy cycles (no START)
+  6  RUN of a list whose second entry has an unknown kind: the RUN must be
+     refused with the run status, after doing the first entry (read back);
+     CLEAR then resets the error flag
 The engine's buffers are overwritten; run run_image.py afterwards as usual.
 Needs numpy; pyserial for a board.
 """
@@ -35,10 +41,12 @@ import numpy as np
 HOST_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(HOST_DIR)
 sys.path.insert(0, HOST_DIR)
+import ddr_image  # noqa: E402
 import protocol  # noqa: E402
 
 TEST_OFFSET = 8 << 20       # DDR byte offset of step 2, clear of ddr_image's region (1 MiB .. ~2 MiB)
 DMA_OFFSET = 16 << 20       # DDR byte offset of the DMA test data
+RUN_OFFSET = 24 << 20       # DDR byte offset of the run lists and their data
 
 
 def compare(name, got, want):
@@ -55,7 +63,8 @@ def compare(name, got, want):
     return True
 
 
-def check(link, total_bytes, rng):
+def check(link, total_bytes, rng, run_entries):
+    """run_entries collects the run list entries the RUNs carry out (for the summary of --record)."""
     passed = True
     link.clear()
     flags, _cycles = link.status()
@@ -103,6 +112,48 @@ def check(link, total_bytes, rng):
         except protocol.ProtocolError as error:
             print(f"  {'4 DMA_LOAD ' + str(length) + ' bytes to the ' + name:44s} FAIL  {error}")
             passed = False
+    # step 5: a run list of three LOADs; the bridge fetches and runs them by itself
+    transfers = [(2, 10, 16), (3, 0, 300), (0, 1000, 7)]
+    entries, payloads, data_offset = [], [], RUN_OFFSET + 4096
+    for buffer_id, address, items in transfers:
+        payload = rng.integers(0, 256, 8 * items, dtype=np.uint8).tobytes()
+        link.write_ddr(data_offset, payload)
+        entries.append(protocol.load_entry(protocol.KIND_POOL, buffer_id, address, data_offset, len(payload)))
+        payloads.append(payload)
+        data_offset += -(-len(payload) // 64) * 64
+    link.write_ddr(RUN_OFFSET, b"".join(entries))
+    try:
+        cycles = link.run(RUN_OFFSET, len(entries))
+        run_entries += entries
+        print(f"  {'5 RUN of 3 LOAD entries':44s} {'PASS' if cycles == 0 else 'FAIL'}  answered, "
+              f"{cycles} busy cycles (0 expected)")
+        passed &= cycles == 0
+    except protocol.ProtocolError as error:
+        print(f"  {'5 RUN of 3 LOAD entries':44s} FAIL  {error}")
+        passed = False
+    for (buffer_id, address, items), payload in zip(transfers, payloads):
+        back = link.read_buffer(buffer_id, address, items)
+        passed &= compare(f"5   RUN loaded {items} items to buffer {buffer_id} @ {address}", back, payload)
+
+    # step 6: a list whose second entry has kind 7: the first runs, then the RUN stops with the run status
+    payload = rng.integers(0, 256, 8 * 5, dtype=np.uint8).tobytes()
+    link.write_ddr(data_offset, payload)
+    bad = (7).to_bytes(4, "little") + bytes(12)
+    entries = [protocol.load_entry(protocol.KIND_POOL, 4, 20, data_offset, len(payload)), bad]
+    link.write_ddr(RUN_OFFSET + 1024, b"".join(entries))
+    try:
+        link.run(RUN_OFFSET + 1024, len(entries))
+        print(f"  {'6 RUN with a bad entry is refused':44s} FAIL  the RUN was answered as done")
+        passed = False
+    except protocol.ProtocolError as error:
+        refused = error.status == protocol.STATUS_RUN
+        print(f"  {'6 RUN with a bad entry is refused':44s} {'PASS' if refused else 'FAIL'}  status {error.status} "
+              f"({protocol.STATUS_RUN} expected)")
+        passed &= refused
+    run_entries.append(entries[0])
+    passed &= compare("6   the entry before it was done", link.read_buffer(4, 20, 5), payload)
+    link.clear()
+
     flags, _cycles = link.status()
     if flags & protocol.FLAG_ERROR:
         print("  the board's error flag is set after the checks: FAIL")
@@ -137,8 +188,9 @@ def main():
         link.record = []
 
     print("ddr_check: external memory and DMA")
+    run_entries = []
     try:
-        passed = check(link, args.bytes, np.random.default_rng(2024))
+        passed = check(link, args.bytes, np.random.default_rng(2024), run_entries)
     except protocol.ProtocolError as error:
         print(f"  FAIL: {error}")
         passed = False
@@ -151,8 +203,10 @@ def main():
                 tx.write("".join(f"{byte:02x}\n" for byte in packet))
                 rx.write("".join(f"{byte:02x}\n" for byte in response))
                 packets.write(f"{len(packet)} {len(response)} {int(packet[1] == protocol.START)}\n")
+        with open(prefix + "summary.txt", "w") as summary:
+            summary.write(" ".join(str(value) for value in ddr_image.run_totals(run_entries)) + "\n")
         print(f"recorded {len(link.record)} packets to {prefix}*")
-    print("PASS: the DDR and the DMA work" if passed else "FAIL: see the steps above")
+    print("PASS: the DDR, the DMA and RUN work" if passed else "FAIL: see the steps above")
     return 0 if passed else 1
 
 

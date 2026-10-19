@@ -34,6 +34,7 @@ runs=(
     "nexys_top_mnist112"
     "axi_replay_mnist112"
     "axi_replay_ddr_mnist112"
+    "axi_replay_run_mnist112"
     "nexys_top_ddr"
 )
 

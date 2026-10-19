@@ -12,8 +12,9 @@ reports idle, with the cycle count of python/cycle_model.py.
 
 ModelDevice(memory=True) is a board with external memory: the DDR (a byte
 array) and the DMA behind WRITE_DDR, READ_DDR and DMA_LOAD, with the bridge's
-status bits. Without it those commands get the memory status, as on a board
-whose memory is not calibrated or absent.
+status bits, and RUN, which works through a run list in that DDR. Without it
+those commands get the memory status, as on a board whose memory is not
+calibrated or absent.
 """
 
 import os
@@ -130,6 +131,23 @@ class ModelDevice:
                 engine.descriptors[address + item] = [int.from_bytes(chunk[4 * w:4 * w + 4], "little")
                                                       for w in range(5)]
 
+    def run_list(self, item, entries):
+        """RUN: the entries of the run list at DDR item `item`. Returns (total busy cycles, status)."""
+        total = 0
+        for index in range(entries):
+            entry = bytes(self.ddr[8 * item + protocol.ENTRY_BYTES * index:][:protocol.ENTRY_BYTES])
+            word0, word1 = int.from_bytes(entry[0:4], "little"), int.from_bytes(entry[4:8], "little")
+            if word0 & 0xFF == protocol.ENTRY_LOAD:
+                self.dma_load(word0 >> 8 & 0xFF, word1 & 0xFFFFFF, entry[8:16])
+            elif word0 & 0xFF == protocol.ENTRY_START:
+                self.done = False
+                self.cycles = self.engine.run(word1 & 0xFF)
+                self.done = True
+                total = (total + self.cycles) & 0xFFFFFFFF
+            else:
+                return total, protocol.STATUS_RUN
+        return total, 0
+
     def write(self, data):
         while data:
             assert data[0] == protocol.START_BYTE
@@ -141,7 +159,8 @@ class ModelDevice:
             out = b""
             engine = self.engine
             memory_command = code in (protocol.WRITE_DDR, protocol.READ_DDR) or (code == protocol.DMA_LOAD
-                                                                                and count == 1)
+                                                                                and count == 1) \
+                or (code == protocol.RUN and count != 0)
             if memory_command and not self.memory:
                 status |= protocol.STATUS_MEMORY
             if code == protocol.WRITE_DDR:           # lands whatever the checksum says, as the engine writes
@@ -152,6 +171,12 @@ class ModelDevice:
                     status |= protocol.STATUS_COMMAND
                 elif status == 0:
                     self.dma_load(target, address, payload)
+            elif code == protocol.RUN:
+                if count == 0:
+                    status |= protocol.STATUS_COMMAND
+                elif status == 0:
+                    total, status = self.run_list(address, count)
+                    out = total.to_bytes(4, "little")
             elif status == 0 and code == protocol.READ_DDR:
                 out = bytes(self.ddr[8 * address:8 * (address + count)])
             elif code in protocol.ITEM_BYTES:        # the writes land whatever the checksum says

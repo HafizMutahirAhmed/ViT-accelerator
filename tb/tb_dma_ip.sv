@@ -16,9 +16,12 @@
 // Stimulus: python/ddr_check.py --model --bytes 4096 --record, the byte stream
 // of the bring-up check against the software model of the board (DDR write and
 // read-back, DMA_LOADs into pool buffers with READ_BUFFER of each, DMA_LOADs
-// into the bias store, LayerNorm constants and descriptor memory). Every
+// into the bias store, LayerNorm constants and descriptor memory, then two
+// RUNs: a run list of three LOAD entries, and one whose second entry has an
+// unknown kind, which the bridge must refuse after doing the first). Every
 // response byte must equal the model's, and the engine must see one write per
-// item of every DMA_LOAD.
+// item of every DMA_LOAD and of every LOAD entry the RUNs carry out
+// (host_stream_ddrcheck_summary.txt, as ddr_image.run_totals counts them).
 //
 // Run with scripts/sim_dma_ip.sh, not sim.sh: it needs the DMA's libraries.
 // Vectors: python/vectors/mnist112/host_stream_ddrcheck_*.
@@ -383,10 +386,18 @@ module tb_dma_ip #(
         longint expected_pool = 0, expected_bias = 0, expected_layernorm = 0, expected_descriptor = 0;
         longint expected_dma_beats = 0;
         int violations;
+        int summary, run_packets = 0;
+        longint run_loads, run_beats, run_pool, run_bias, run_layernorm, run_descriptor_words, run_starts;
 
         $display("tb_dma_ip: the bring-up byte stream through the bridge and the real AXI DMA");
         $readmemh(vector_file("host_stream_ddrcheck_tx.hex"), host_bytes);
         $readmemh(vector_file("host_stream_ddrcheck_rx.hex"), model_bytes);
+        summary = $fopen(vector_file("host_stream_ddrcheck_summary.txt"), "r");
+        if ($fscanf(summary, "%d %d %d %d %d %d %d", run_loads, run_beats, run_pool, run_bias, run_layernorm,
+                    run_descriptor_words, run_starts) != 7) begin
+            $fatal(1, "FAIL: host_stream_ddrcheck_summary.txt does not hold seven numbers");
+        end
+        $fclose(summary);
         reset    = 1'b1;
         rx_valid = 1'b0;
         rx_data  = '0;
@@ -420,6 +431,7 @@ module tb_dma_ip #(
                             default: expected_descriptor += 5 * (length / 24);
                         endcase
                     end
+                    8'h0C: run_packets++;
                     default: begin
                     end
                 endcase
@@ -448,21 +460,29 @@ module tb_dma_ip #(
         end
         $fclose(packets);
         repeat (20) @(negedge CLK);
+        // what the RUNs' LOAD entries moved
+        expected_dma_beats  += run_beats;
+        expected_pool       += run_pool;
+        expected_bias       += run_bias;
+        expected_layernorm  += run_layernorm;
+        expected_descriptor += run_descriptor_words;
 
         violations = check_dma.violations + check_aw.violations + check_ar.violations + check_mm2s_ar.violations
                      + burst_violations;
-        $display("  DMA: %0d DMA_LOAD packets, %0d read bursts, %0d beats read, %0d of %0d stream beats; %0d bad bursts",
-                 dma_loads, bursts, mm2s_beats, check_dma.beats, expected_dma_beats, burst_violations);
+        $display("  DMA: %0d DMA_LOAD packets, %0d RUN packets with %0d LOAD entries, %0d read bursts, %0d beats read, %0d of %0d stream beats; %0d bad bursts",
+                 dma_loads, run_packets, run_loads, bursts, mm2s_beats, check_dma.beats, expected_dma_beats,
+                 burst_violations);
         $display("  engine writes: pool %0d of %0d, bias %0d of %0d, LayerNorm %0d of %0d, descriptor words %0d of %0d",
                  pool_writes, expected_pool, bias_writes, expected_bias, layernorm_writes, expected_layernorm,
                  descriptor_writes, expected_descriptor);
-        if (mismatches == 0 && received == expected && packet_count > 0 && dma_loads > 0 && !error_flag
+        if (mismatches == 0 && received == expected && packet_count > 0 && dma_loads > 0 && run_packets > 0
+            && !error_flag
             && violations == 0 && error_responses == 0 && bad_lite_addresses == 0
             && check_dma.beats == expected_dma_beats && mm2s_beats == expected_dma_beats
             && pool_writes == expected_pool && bias_writes == expected_bias
             && layernorm_writes == expected_layernorm && descriptor_writes == expected_descriptor) begin
-            $display("PASS: %0d packets (%0d DMA loads through the AXI DMA IP), %0d of %0d response bytes equal to the model's, no rule violation, no beat lost",
-                     packet_count, dma_loads, received, expected);
+            $display("PASS: %0d packets (%0d DMA loads and %0d run list LOADs through the AXI DMA IP), %0d of %0d response bytes equal to the model's, no rule violation, no beat lost",
+                     packet_count, dma_loads, run_loads, received, expected);
         end
         else begin
             $display("FAIL: %0d of %0d response bytes differ, first mismatch at byte %0d, %0d received, %0d rule violations, %0d error responses, error flag %b",

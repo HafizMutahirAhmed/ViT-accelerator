@@ -6,6 +6,7 @@ Usage:
   python3 python/run_image.py --model --digit 0                      the software model of the board
   python3 python/run_image.py --port /dev/ttyUSB1 --png digit.png --check
   python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --ddr      weights from DDR (nexys_top_ddr)
+  python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --run      one RUN command per image (nexys_top_ddr)
 
   --ping         only ask the board for its status and print it: a link check that takes
                  a moment. Exit code 0 if the board answered and its error flag is clear.
@@ -32,7 +33,14 @@ Usage:
                  (python/ddr_image.py; skipped when the DDR already holds them) and
                  every phase loads them with DMA_LOAD. Only the image itself and the
                  descriptors cross the serial link per run
-  --ddr-reload   with --ddr: upload the DDR image even if the DDR already holds it
+  --ddr-reload   with --ddr or --run: upload the DDR image even if the DDR already holds it
+  --run          like --ddr, but the board runs the program by itself: the image goes
+                 to DDR with WRITE_DDR, then one RUN works through the run list that
+                 ddr_image.py put in DDR (every LOAD and START), and the scores are read
+                 back. --check then compares only the last phase's stages, the ones
+                 still whole at the end. --record writes host_stream_run_*, and
+                 host_stream_run_summary.txt (what one RUN moves), for
+                 tb_axi_replay_run_mnist112
 
 The program directory comes from python/gen_mnist_forward.py: the descriptor
 table, the phases, what to load before each phase and where every stage is.
@@ -175,6 +183,26 @@ def run(link, program, embed_in, check=None, verbose=True, clear=False, ddr=None
     return outputs["head_mean"], outputs["head_class"], cycles
 
 
+def run_with_list(link, program, embed_in, ddr, check=None, clear=False):
+    """The RUN flow: the image to DDR, one RUN, then the last phase's outputs read back.
+    Returns (scores of head_mean 50 x 10, scores of head_class 1 x 10, engine cycles)."""
+    link.clear()
+    if clear:
+        for buffer_id, depth in enumerate(program.depths):
+            link.write(protocol.WRITE_BUFFER, buffer_id, 0, bytes(8 * depth))
+    cycles = ddr.run(link, row_bank_bytes(embed_in))
+    _phase, first, count = program.phases[-1]
+    outputs = {}
+    for op in program.ops[first:first + count]:
+        wanted = op["name"] in ("head_mean", "head_class")
+        if (check and op["entry"] in program.survivors) or wanted:
+            tensor = tensor_of(op, link.read_buffer(op["buffer"], *region(op)))
+            outputs[op["name"]] = tensor
+            if check:
+                check(op, tensor)
+    return outputs["head_mean"], outputs["head_class"], cycles
+
+
 def ping(args):
     """STATUS, once: is there a board that speaks the protocol, and is it happy?"""
     if args.model:
@@ -222,10 +250,13 @@ def main():
     parser.add_argument("--ping", action="store_true")
     parser.add_argument("--ddr", action="store_true")
     parser.add_argument("--ddr-reload", action="store_true")
+    parser.add_argument("--run", action="store_true")
     parser.add_argument("--program", default=os.path.join(HOST_DIR, "vectors", "mnist112"))
     args = parser.parse_args()
     if (args.port is None) == (not args.model):
         parser.error("give --port or --model")
+    if args.run:
+        args.ddr = True
     if args.ping:
         return ping(args)
     if (args.digit is None) == (args.png is None):
@@ -291,8 +322,12 @@ def main():
             print(f"DDR: the weights are already in DDR ({len(ddr.image)} bytes), not uploaded again")
     started = time.time()
     checking = (args.check and not args.model) or (args.model and args.golden)
-    mean_scores, class_scores, cycles = run(link, program, embed_in, check if checking else None,
-                                            clear=args.clear, ddr=ddr)
+    if args.run:
+        mean_scores, class_scores, cycles = run_with_list(link, program, embed_in, ddr,
+                                                          check if checking else None, clear=args.clear)
+    else:
+        mean_scores, class_scores, cycles = run(link, program, embed_in, check if checking else None,
+                                                clear=args.clear, ddr=ddr)
     elapsed = time.time() - started
 
     patch_sum = mean_scores[1:].astype(np.int64).sum(0)
@@ -304,13 +339,17 @@ def main():
     print(f"engine cycles {cycles}; {link.bytes_sent} bytes sent, {link.bytes_received} received, "
           f"{elapsed:.1f} s")
     if args.record:
-        prefix = os.path.join(program.directory, "host_stream_ddr_" if args.ddr else "host_stream_")
+        prefix = os.path.join(program.directory, "host_stream_run_" if args.run else
+                              "host_stream_ddr_" if args.ddr else "host_stream_")
         with open(prefix + "tx.hex", "w") as tx, open(prefix + "rx.hex", "w") as rx, \
                 open(prefix + "packets.txt", "w") as packets:
             for packet, response in link.record:
                 tx.write("".join(f"{byte:02x}\n" for byte in packet))
                 rx.write("".join(f"{byte:02x}\n" for byte in response))
                 packets.write(f"{len(packet)} {len(response)} {int(packet[1] == protocol.START)}\n")
+        if args.run:
+            with open(prefix + "summary.txt", "w") as summary:
+                summary.write(" ".join(str(value) for value in ddr.run_totals()) + "\n")
         print(f"recorded {len(link.record)} packets to {prefix}*")
     if checking:
         print("CHECK FAIL: " + ", ".join(failures) if failures else "CHECK PASS: every stage read back matches")
