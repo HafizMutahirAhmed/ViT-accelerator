@@ -1,12 +1,11 @@
 # Nexys A7-100T quick start
 
 From a fresh clone to a digit recognised on a Digilent Nexys A7-100T
-(xc7a100tcsg324-1). The design is `nexys_top_axi` with the MNIST-112
-configuration: a 28 x 28 digit is resized to 112 x 112 on the host, sent over
-the USB-UART with the weights, run through two DeiT-Tiny encoder layers on the
-FPGA, and the class scores come back. The constraints are
-`boards/nexys_a7/nexys_a7.xdc` (lines from Digilent's Nexys-A7-100T-Master.xdc,
-digilent-xdc commit 7583b4e) and `boards/nexys_a7/nexys_config.xdc`.
+(xc7a100tcsg324-1). The design is `nexys_top_ddr`: the accelerator, the board's 128 MiB DDR2 behind an AXI DMA (block design
+`memory_system`: MIG, AXI DMA, SmartConnect; a Clocking Wizard makes the
+clocks), and the USB-UART to the host. A 28 x 28 digit is resized to 112 x 112
+on the host and sent over the UART; the board runs the first N DeiT-Tiny encoder
+layers on it with the weights from DDR, and the class scores come back.
 
 | Port | Pin | Nexys A7 signal |
 |---|---|---|
@@ -14,7 +13,13 @@ digilent-xdc commit 7583b4e) and `boards/nexys_a7/nexys_config.xdc`.
 | ck_rst | C12 | CPU_RESET button, active low |
 | uart_txd_in | C4 | UART_TXD_IN, host to FPGA |
 | uart_rxd_out | D4 | UART_RXD_OUT, FPGA to host |
-| led[0..3] | H17, K15, J13, N14 | LD0 busy, LD1 done, LD2 error, LD3 byte lost |
+| led[0..4] | H17, K15, J13, N14, R18 | LD0 busy, LD1 done, LD2 error, LD3 byte lost, LD4 DDR2 calibrated |
+| ddr2_* | bank 34 | the DDR2, pins from the MIG configuration `boards/nexys_a7/mig_ddr2.prj` |
+
+The pin lines are Digilent's Nexys-A7-100T-Master.xdc (digilent-xdc commit
+7583b4e), in `boards/nexys_a7/nexys_a7_ddr.xdc`; the MIG configuration is
+Digilent's, from the Nexys A7-100T board files, with the system clock taken
+from the clocking wizard. Sources and checksums are in the files.
 
 ## Prerequisites
 
@@ -22,59 +27,30 @@ digilent-xdc commit 7583b4e) and `boards/nexys_a7/nexys_config.xdc`.
   `<Vivado>/data/xicom/cable_drivers/lin64/install_script/install_drivers/install_drivers` once, as root.
 - Python 3 with `numpy`, `Pillow` and `pyserial`, and on Linux membership of the
   `dialout` group for the serial port.
-- The program files: `python/vectors/mnist112/`, written by
-  `scripts/gen_vectors.sh`, which needs `torch`, `timm` and `torchvision` in `.venv/`:
+- A model: `python/models/nexys_L<N>/`, made by `make_model.py`, which needs
+  `torch`, `timm` and `torchvision` in `.venv/`:
 
 ```sh
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install torch torchvision timm
-scripts/gen_vectors.sh
+.venv/bin/python python/make_model.py --board nexys --layers 2
 ```
 
-Without the board, `python3 python/sim_digit.py --digit N [--index K]` runs the K-th test image of digit N
-through the simulated design (xsim, 6 to 10 min), checks every stage bit for bit against the Python model and
-prints the predicted digit; `--all-digits [--jobs J]` does one image of each digit and prints a table.
-
-## Build in the Vivado GUI
-
-1. **Tools > Run Tcl Script...** and pick `scripts/create_nexys_project.tcl`.
-   It creates `build/nexys_a7_project/nexys_a7.xpr` with top `nexys_top_axi`.
-2. In the Flow Navigator: **Run Synthesis**, then **Run Implementation**, then
-   **Generate Bitstream**. Check that WNS and WHS in the timing summary are 0 or more.
-3. **Open Hardware Manager > Open Target > Auto Connect**, then **Program
-   Device** with `build/nexys_a7_project/nexys_a7.runs/impl_1/nexys_top_axi.bit`.
-
-## Run
+## Choosing the number of layers
 
 ```sh
-python3 python/run_image.py --port /dev/ttyUSB1 --ping
-python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --check
+.venv/bin/python python/make_model.py --board nexys --layers 6      # any of 1 .. 12
 ```
 
-The FT2232 on the board gives two serial ports (`/dev/ttyUSB0` and
-`/dev/ttyUSB1` on Linux, two COM ports on Windows); one is JTAG, one is the
-UART. If `--ping` gets no answer on one, try the other. CPU_RESET resets
-the design.
+It writes `python/models/nexys_L6/`. The scales of all 12 layers are in
+`python/calibration/nexys_scales.json`; the first time a layer count is made,
+its digit classifier is trained (a few minutes to an hour for 12 layers) and
+kept in `python/calibration/nexys_L<N>_probe.npz`. `--report` also prints the
+accuracy on 2,000 test digits. The bitstream holds the tables of all 12 layers,
+so **the same bitstream runs every layer count**; `run_image.py --model-dir`
+picks the model.
 
-## With the DDR2 as external memory
-
-`nexys_top_ddr` is the same accelerator with the board's 128 MiB DDR2 and an
-AXI DMA (block design `memory_system`: MIG, AXI DMA, SmartConnect; a Clocking
-Wizard makes the clocks). The weights go to DDR once per power-up; after that a
-run sends only the image (about 45 KB instead of 1.1 MB over the UART) and the
-DMA copies each phase's weights from DDR into the engine. `nexys_top_axi` above
-is unchanged and still works as before.
-
-| Port | Pin | Nexys A7 signal |
-|---|---|---|
-| led[4] | R18 | LD4: the MIG has calibrated the DDR2 |
-| ddr2_* | bank 34 | the DDR2, pins from the MIG configuration `boards/nexys_a7/mig_ddr2.prj` |
-
-The other pins are those of the table at the top. The MIG configuration is
-Digilent's, from the Nexys A7-100T board files, with the system clock taken
-from the clocking wizard; the source and its sha256 are in the file.
-
-### Build
+## Build
 
 In the GUI: **Tools > Run Tcl Script...** with `scripts/create_nexys_ddr_project.tcl`
 (it creates `build/nexys_a7_ddr_project/nexys_a7_ddr.xpr` with top `nexys_top_ddr`,
@@ -86,35 +62,42 @@ vivado -mode batch -source scripts/build_nexys_ddr.tcl
 ```
 
 `build_nexys_ddr.tcl` writes the reports to `build/nexys_a7_ddr_reports/` and
-prints WNS and WHS; both must be 0 or more. Program the device with
+prints WNS and WHS; both must be 0 or more. Program the device (**Open Hardware
+Manager > Open Target > Auto Connect > Program Device**) with
 `build/nexys_a7_ddr_project/nexys_a7_ddr.runs/impl_1/nexys_top_ddr.bit`.
 
-### Run
+## Run
 
 ```sh
-python3 python/run_image.py --port /dev/ttyUSB1 --ping              # ddr 1 = DDR2 calibrated
-python3 python/ddr_check.py --port /dev/ttyUSB1                     # DDR and DMA bring-up
-python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --ddr --check
-python3 python/run_image.py --port /dev/ttyUSB1 --digit 3 --ddr     # weights already in DDR
-python3 python/run_image.py --port /dev/ttyUSB1 --digit 3 --run --check   # one RUN per image
+python3 python/run_image.py --port /dev/ttyUSB1 --ping                 # ddr 1 = DDR2 calibrated
+python3 python/ddr_check.py --port /dev/ttyUSB1                        # DDR, DMA and RUN bring-up
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --check      # the 2-layer model
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --model-dir python/models/nexys_L6
+python3 python/run_image.py --port /dev/ttyUSB1 --png my_digit.png     # any picture of a digit
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --step --check   # every stage checked
 ```
 
 1. After programming, **LD4 must come on** within a second: the MIG has
    calibrated the DDR2. `--ping` then prints `ddr 1`. If LD4 stays off, press
-   CPU_RESET once; if it still stays off, the bitstream is not
-   `nexys_top_ddr` or the MIG did not calibrate.
-2. `ddr_check.py` writes 64 KiB to DDR and reads it back, then moves data into
-   the engine's buffers with the DMA and reads it back, then runs two small run
+   CPU_RESET once.
+2. `ddr_check.py` writes 64 KiB to DDR and reads it back, moves data into the
+   engine's buffers with the DMA and reads it back, then runs two small run
    lists with `RUN` (one that must work, one that must be refused); every step
-   prints PASS or FAIL with the first mismatch index. It overwrites the
-   engine's buffers, which a run writes again anyway.
-3. The first `run_image.py --ddr` uploads the weights (about 1 MB, roughly 12 s
-   over the UART) and prints `DDR: uploaded ...`; later runs on the powered
-   board print `the weights are already in DDR` and take well under a second
-   of transfer. `--ddr-reload` uploads them again. `--check` compares every
-   stage with the software model, as without DDR.
-4. `--run` lets the board run the whole program by itself: the image goes to
-   DDR, then one `RUN` command, and the board answers when the scores are
-   ready. `--check` then compares the last phase's stages (the final
-   LayerNorm and both classifiers) with the software model; the earlier
-   stages are overwritten by then, so use `--ddr --check` to see them all.
+   prints PASS or FAIL with the first mismatch index.
+3. `run_image.py` uploads the model's weights to DDR the first time (about
+   1 MB for 2 layers, roughly 12 s; 6 MB and over a minute for 12 layers) and
+   prints `DDR: uploaded ...`; later runs of the same model on the powered board
+   print `the weights are already in DDR`. `--reload` uploads them again. Per
+   image the image goes to DDR and one `RUN` command makes the board run the
+   whole program by itself; about 10 ms of engine time for 2 layers, 60 ms for 12.
+4. `--check` compares the board's stages with the software model fed the same
+   image: by default the last phase's (the final LayerNorm and both
+   classifiers), with `--step` every stage. `--step` runs the phases one by
+   one from the host instead of one `RUN`, so they can be read back between.
+5. `--digit N` is the N-th picture of the MNIST test set (its label is
+   printed); `--png` takes any picture of one digit and prepares it the way
+   MNIST digits were made (`--save-input` shows the result).
+
+The FT2232 on the board gives two serial ports (`/dev/ttyUSB0` and
+`/dev/ttyUSB1` on Linux, two COM ports on Windows); one is JTAG, one is the
+UART. If `--ping` gets no answer on one, try the other.

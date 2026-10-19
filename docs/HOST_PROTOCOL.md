@@ -66,7 +66,7 @@ stays set until `CLEAR`.
 
 `STATUS` flags: bit 0 = engine busy, bit 1 = done seen since the last `START`
 or `CLEAR`, bit 2 = sticky error flag, bit 3 = external memory ready (the MIG
-has calibrated the DDR; always 0 on `nexys_top_axi`).
+has calibrated the DDR).
 
 Rules:
 
@@ -130,37 +130,37 @@ The descriptor program, the images and their addresses are the files
 `python/layer_program.py` writes (`program_desc.hex`, `program_phases.txt`,
 `program_loads.txt`, `*_image.hex`). For one image:
 
-1. `WRITE_DESCRIPTOR` the whole table (once per power-up).
+1. `WRITE_DESCRIPTOR` the whole table, when it fits the 256 entries of the
+   descriptor memory.
 2. For each phase in `program_phases.txt`:
-   1. send the phase's loads from `program_loads.txt`: `WRITE_BUFFER`,
-      `WRITE_BIAS` or `WRITE_LAYERNORM`;
-   2. `START` with the phase's first entry;
-   3. poll `STATUS` until busy is 0.
+   1. for a longer program, `WRITE_DESCRIPTOR` the phase's entries: entry e
+      goes to slot e mod 256;
+   2. send the phase's loads from `program_loads.txt`: `WRITE_BUFFER`,
+      `WRITE_BIAS` or `WRITE_LAYERNORM`, or `DMA_LOAD` from DDR;
+   3. `START` with the slot of the phase's first entry;
+   4. poll `STATUS` until busy is 0.
 3. `READ_BUFFER` the classifier scores.
 
 Between two phases every buffer can be read with `READ_BUFFER`, which is how
-`python/run_image.py --check` compares the stages on the board with the golden
-tensors.
+`python/run_image.py --step --check` compares the stages on the board with the
+golden tensors.
 
-With `RUN` (`python/run_image.py --run`) the host writes, once per power-up,
-also the descriptor table and the run list into DDR (`python/ddr_image.py`:
-the list loads the descriptors, then per phase every load and a `START`). For
-one image it writes the image to DDR byte 0 with `WRITE_DDR`, sends one `RUN`
-and reads the scores with `READ_BUFFER`. The stages before the last phase are
-overwritten by then; `--check` without `--run` reads them all.
-
-With external memory (`boards/nexys_a7/nexys_top_ddr.sv`,
-`python/run_image.py --ddr`), the weights, biases and LayerNorm constants are
-put in DDR once per power-up, as `python/ddr_image.py` lays them out (from byte
-1 MiB on, each load on a 64-byte boundary, with a 64-byte signature just
-below 1 MiB that names the image). A run then reads the signature with
-`READ_DDR`, uploads the image with `WRITE_DDR` only if the DDR does not
-already hold it, and in step 2.1 sends one `DMA_LOAD` per load instead of its
-bytes; only the image itself goes as `WRITE_BUFFER`.
+What `python/run_image.py` does on the Nexys A7 (`nexys_top_ddr`): the
+weights, biases, LayerNorm constants, the descriptor table and the run list go
+into DDR once per power-up and model, as `python/ddr_image.py` lays them out
+(from byte 1 MiB on, each load on a 64-byte boundary, with a 64-byte signature
+just below 1 MiB that names the image). A run reads the signature with
+`READ_DDR` and uploads the image with `WRITE_DDR` only if the DDR does not
+already hold it. Then, per image, it writes the image to DDR byte 0 with
+`WRITE_DDR`, sends one `RUN` (the list loads the descriptors, all at once or
+per phase, then per phase every load and a `START`) and reads the scores with
+`READ_BUFFER`. The stages before the last phase are overwritten by then;
+`--step` runs the steps above from the host instead, with a `DMA_LOAD` per
+load, and can read every stage.
 
 ## UART (Nexys A7)
 
 8 data bits, no parity, 1 stop bit, least significant bit first, 921,600 baud
-by default (`BAUD_RATE` parameter of `boards/nexys_a7/nexys_top_axi.sv`). No
+by default (`BAUD_RATE` parameter of `boards/nexys_a7/nexys_top_ddr.sv`). No
 hardware flow control: the command and response discipline above is enough,
 because the FPGA handles a byte in far less than a byte time.

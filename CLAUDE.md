@@ -6,7 +6,7 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 ## Layout
 - rtl/core/       the engine and the non-linear units. FROZEN: do not change it unless I ask.
 - rtl/interface/  host protocol, AXI wrapper and bridge.
-- rtl/rom/        table images per configuration (deit224, mnist112); generated, committed.
+- rtl/rom/        table images per board (nexys, opal_kelly), all 12 layers; generated, committed.
 - tb/             self-checking testbenches, tb_<name>.sv.
 - boards/         one directory per board: top level, transport, constraints.
 - python/         golden models, generators, host software.
@@ -16,17 +16,16 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 
 ## Commands (Ubuntu; Vivado 2022.2 settings64.sh is sourced before claude starts)
 - Vectors (none are tracked): `scripts/gen_vectors.sh` (needs .venv with torch, timm, torchvision)
+- A model: `.venv/bin/python python/make_model.py --board nexys|opal_kelly --layers N` (1..12),
+  writes python/models/<board>_L<N>/
 - One testbench: `scripts/sim.sh <name> [PARAM=value ...]`, log in sim/sim_<name>.log
-- Regression: `scripts/regress.sh [jobs]`; about an hour, the DeiT-224 runs dominate
-- Nexys A7 project: `vivado -mode batch -source scripts/create_nexys_project.tcl`, or in the GUI
-  Tools > Run Tcl Script; then synthesis, implementation and bitstream in the GUI
-- Nexys A7 with DDR2 (nexys_top_ddr): `vivado -mode batch -source scripts/create_nexys_ddr_project.tcl`,
+- Regression: `scripts/regress.sh [jobs]`; about an hour, the opal_kelly (224) runs dominate
+- Nexys A7 (nexys_top_ddr): `vivado -mode batch -source scripts/create_nexys_ddr_project.tcl`,
   then `vivado -mode batch -source scripts/build_nexys_ddr.tcl` (reports in build/nexys_a7_ddr_reports)
 - The bridge against the real AXI DMA IP: `scripts/sim_dma_ip.sh`, log in sim/sim_dma_ip.log
-- Engine alone on the XC7A200T: `vivado -mode batch -source scripts/ooc_matmul_engine.tcl`
-- Host: `python3 python/run_image.py --port <port> --ping`, then `--digit 0`; `--model` needs no board;
-  with nexys_top_ddr: `python3 python/ddr_check.py --port <port>`, then `run_image.py ... --ddr`
-  (step by step) or `--run` (one RUN command per image)
+- Host: `python3 python/run_image.py --port <port> --ping`, `python3 python/ddr_check.py --port <port>`,
+  then `run_image.py --port <port> --digit 0 [--model-dir python/models/nexys_L<N>] [--step] [--check]`;
+  `--model` instead of `--port` needs no board
 - Only `python3` is on the PATH; the generators that need torch run with `.venv/bin/python`
 
 ## Conventions
@@ -42,7 +41,8 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 - Run the testbench after every RTL change; fix failures before moving on.
 - Never edit golden vectors to make a test pass, and do not edit a testbench to make a test pass.
 - Do not commit generated files: vectors, images, sim/, build/, Vivado output.
-- The scale files python/scales_*.json and the ROM images are committed on purpose; change them
+- The scale files python/calibration/*_scales.json, the probes python/calibration/*_probe.npz and
+  the ROM images are committed on purpose; change them
   only with --recalibrate and say so.
 - Commit per step. Do not push; I push.
 - Do not dump full logs into the conversation; grep for errors, mismatches and timing lines.

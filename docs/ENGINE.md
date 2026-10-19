@@ -122,7 +122,7 @@ The struct is 153 bits. In the descriptor memory it sits in the low bits of a
 change if those maximums change.
 
 `python/pkg_config.py` parses the package, so `pack_descriptor()` in Python and
-the RTL always agree. `python/gen_vectors.py` and `python/gen_deit_vectors.py`
+the RTL always agree. `python/gen_vectors.py` and `python/golden_model.py`
 emit tables with it.
 
 Rules for a descriptor:
@@ -200,7 +200,9 @@ length), `activation_buffer_id` and `activation_base` (the operand),
   only after it was read. The two operands of an add must be in different
   buffers. The checks are per opcode.
 - **Tables.** The GELU, exp and reciprocal-square-root tables are ROMs loaded
-  with `$readmemh` from `rtl/rom/`, written by `python/gen_deit_forward.py`.
+  with `$readmemh` from `rtl/rom/<board>/`, written by `python/make_model.py`:
+  one GELU table per layer and one exp table per head, for all 12 layers
+  (`GELU_TABLE_COUNT` 12, `SOFTMAX_TABLE_COUNT` 36).
 - **LayerNorm constants.** Gain (INT16) and offset (INT32) per column are
   written by the host: present `host_address`, `host_layernorm_write_gain`,
   `host_layernorm_write_offset` and `host_layernorm_write_enable` for one
@@ -294,7 +296,7 @@ cycles are the zero-fed flush between tiles.
 
 ## The forward pass as one descriptor program
 
-`python/layer_program.py` lays the whole 2-layer pass out on the buffer pool
+`python/layer_program.py` lays the whole N-layer pass out on the buffer pool
 and writes the descriptor table, the host load images and the golden tensor of
 every stage. `tb_encoder_program` runs it. Nothing is copied between ops.
 
@@ -407,16 +409,17 @@ phase's last output is also read back through the host port.
 |---|---|
 | `tb_encoder_program` | The whole forward pass as one descriptor program, loaded through the host port, every stage compared (see above) |
 | `tb_matmul_engine_nonlinear`, `tb_residual_add`, `tb_gelu_lut`, `tb_layernorm`, `tb_softmax` | The row ops, through the descriptor table and on their own |
-| `tb_matmul_engine_deit224` | All 39 matmuls of the real pretrained DeiT-Tiny (patch embedding, layers 0 and 1, classifier), each on its real captured input, at 8x8 |
+| `tb_matmul_engine_opal_kelly` | All 39 matmuls of the real pretrained DeiT-Tiny (patch embedding, layers 0 and 1, classifier), each on its real captured input, at 8x8 |
 | `tb_matmul_engine_chain` | A five-op attention-head table where each op reads what earlier ops wrote |
 | `tb_matmul_engine` | Single-op tables in both drain modes, with bases, padded strides and bias off |
 | `tb_drain`, `tb_matmul_stream_controller`, `tb_systolic_array`, `tb_requantize` | The blocks on their own |
 
-Every comparison is bit-exact against `python/vectors/`. The engine
+Every comparison is bit-exact against `python/vectors/` and `python/models/`. The engine
 testbenches also check that no word outside the result is written.
 
 Out-of-context place-and-route on the XC7A200T-1 (`xc7a200tfbg484-1`) with a
-6.667 ns clock, from `scripts/ooc_matmul_engine.tcl`:
+6.667 ns clock, measured with a script that has since been removed (with 2 GELU
+and 8 exp tables):
 
 | | 8x8, `block-v1` | 8x8, `engine-v1.1` | 16x16, matmul only |
 |---|---|---|---|
