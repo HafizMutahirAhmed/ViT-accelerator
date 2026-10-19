@@ -11,7 +11,14 @@ Usage:
   --ping         only ask the board for its status and print it: a link check that takes
                  a moment. Exit code 0 if the board answered and its error flag is clear.
   --digit N      MNIST test digit N (from python/mnist, as torchvision downloads it)
-  --png FILE     any image file; it is made greyscale and resized to 112 x 112
+  --png FILE     any picture of one digit (a photo, a drawing, black on white or white on
+                 black): it is made to look like an MNIST digit first (preprocess.mnist_style:
+                 inverted if its background is light, cropped to the digit, scaled into
+                 20 x 20 and centred in 28 x 28), then resized to 112 x 112 like the MNIST
+                 digits. The script cannot know the true digit, so no label is printed
+  --raw          with --png: skip the MNIST-style step, only greyscale and resize
+  --save-input FILE  with --png: save the 28 x 28 digit the board gets, enlarged 8 times, to
+                 see what the preprocessing made of the picture
   --baud N       serial speed, default 921600
   --check        after every phase read back every op output that is still whole
                  and compare it with the software model fed the same bytes
@@ -243,6 +250,8 @@ def main():
     parser.add_argument("--model", action="store_true")
     parser.add_argument("--digit", type=int)
     parser.add_argument("--png")
+    parser.add_argument("--raw", action="store_true")
+    parser.add_argument("--save-input")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--golden", action="store_true")
     parser.add_argument("--record", action="store_true")
@@ -266,6 +275,13 @@ def main():
     label = None
     if args.png:
         pixels = preprocess.load_png(args.png)
+        if not args.raw:
+            pixels = preprocess.mnist_style(pixels)
+        if args.save_input:
+            from PIL import Image
+            Image.fromarray(pixels).resize((8 * pixels.shape[1], 8 * pixels.shape[0]), Image.NEAREST) \
+                .save(args.save_input)
+            print(f"the digit the board gets: {args.save_input}")
     else:
         pixels, label = mnist_test_digit(args.digit)
     real = preprocess.im2col(preprocess.image_tensor(pixels, program.config["size"]))
