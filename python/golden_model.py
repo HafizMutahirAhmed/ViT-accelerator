@@ -16,8 +16,8 @@ each tensor's effective scale, the one the integers really have, and builds
 biases, tables and the next multiplier from that. The three heads of O share
 one tensor and keep the calibrated scale. A layer's scales do not depend on
 the layers after it, so one calibration of all 12 layers serves every N; only
-the final LayerNorm and the classifiers depend on N (keys "head_in@N",
-"head_out@N").
+the final LayerNorm depends on N (key "head_in@N"); the classifier is trained
+for each N (python/make_model.py).
 
 Rounding. The engine requantizer floors. Half an output LSB is added to every
 bias word, so the result is rounded to nearest; S and O, which have no bias,
@@ -40,7 +40,6 @@ import os
 
 import numpy as np
 import torch
-from PIL import Image
 
 import layer_program
 from int8_model import ACC_MAX, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH, add_bias, requantize, write_hex
@@ -74,27 +73,12 @@ def cosine(a, b):
     return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
-def load_image(file_name, cfg):
-    """The model's ImageNet eval preprocessing: resize, centre crop, normalise."""
-    size = cfg["input_size"][-1]
-    resize = int(size / cfg["crop_pct"])
-    image = Image.open(file_name).convert("RGB")
-    scale = resize / min(image.size)
-    image = image.resize((max(resize, round(image.width * scale)), max(resize, round(image.height * scale))),
-                         Image.BICUBIC)
-    left, top = (image.width - size) // 2, (image.height - size) // 2
-    pixels = np.asarray(image.crop((left, top, left + size, top + size)), dtype=np.float32) / 255.0
-    pixels = (pixels - np.array(cfg["mean"], dtype=np.float32)) / np.array(cfg["std"], dtype=np.float32)
-    return torch.from_numpy(pixels.transpose(2, 0, 1).copy()).unsqueeze(0)
-
-
-def capture(model, image, layers, final_rows="class"):
+def capture(model, image, layers):
     """Run one image and return the FP32 tensors of every stage of the first `layers` layers.
 
-    final_rows: "class" puts the final LayerNorm on the class row (the model's own head), "all" on every row.
     Tensors: embed_in/_out (row 0 zero / the bias), L<l>_qkv_in, L<l>_h<h>_q, _k, _v, _s, _p, _o,
-    L<l>_proj, _fc1, _fc2 _in, _out, L<l>_x_in, _x_mid, _x_out, head_in, logits_full, and with
-    final_rows "class" head_out (the model's 1000 logits from head_in)."""
+    L<l>_proj, _fc1, _fc2 _in, _out, L<l>_x_in, _x_mid, _x_out, and head_in (the final LayerNorm on
+    every row)."""
     grabbed = {}
 
     def grab(name):
@@ -114,14 +98,14 @@ def capture(model, image, layers, final_rows="class"):
                   block.norm2.register_forward_hook(grab(f"L{layer}_norm2")),
                   block.register_forward_hook(grab(f"L{layer}_block"))]
     with torch.no_grad():
-        logits = model(image)[0].numpy().astype(np.float64)[None, :]
+        model(image)
         block_out = torch.from_numpy(grabbed[f"L{layers - 1}_block_out"]).float()
         head_in = model.norm(block_out).numpy().astype(np.float64)
     for hook in hooks:
         hook.remove()
 
     embed, heads, head_dim = model.embed_dim, model.blocks[0].attn.num_heads, model.blocks[0].attn.head_dim
-    fp = {"logits_full": logits, "head_in": head_in if final_rows == "all" else head_in[0:1]}
+    fp = {"head_in": head_in}
 
     # patch embedding as a matmul: host im2col, element order (channel, row, column), row 0 zero
     patch = model.patch_embed.patch_size[0]
@@ -155,9 +139,6 @@ def capture(model, image, layers, final_rows="class"):
         fp[f"L{layer}_x_in"] = grabbed[f"L{layer}_block_in"]
         fp[f"L{layer}_x_mid"] = grabbed[f"L{layer}_norm2_in"]
         fp[f"L{layer}_x_out"] = grabbed[f"L{layer}_block_out"]
-    if final_rows == "class":
-        head_weight = model.head.weight.detach().numpy().astype(np.float64).T
-        fp["head_out"] = fp["head_in"] @ head_weight + model.head.bias.detach().numpy().astype(np.float64)
     return fp
 
 
@@ -165,10 +146,9 @@ class Model:
     """Quantized weights, FP32 parameters and scales of the first `layers` layers: what does not depend
     on the image."""
 
-    def __init__(self, model, target, layers, classifiers=None, final_all_rows=None):
+    def __init__(self, model, target, layers, classifiers, final_all_rows=None):
         """classifiers: (name, weight 192 x N, bias, rows, target key, FP32 key or None) per classifier head,
-        rows being "class" (the class row only) or "all". The default is the model's own head on the class
-        row, as head10 (its first ten classes) and head1000."""
+        rows being "class" (the class row only) or "all"; the digit classifiers of make_model.py."""
         assert 1 <= layers <= MAX_LAYERS
         self.target = target
         self.layers = layers
@@ -202,10 +182,6 @@ class Model:
             for name, norm in (("ln1", block.norm1), ("ln2", block.norm2)):
                 self.norm[f"L{layer}_{name}"] = (numpy(norm.weight), numpy(norm.bias), norm.eps)
         self.norm["final_ln"] = (numpy(model.norm.weight), numpy(model.norm.bias), model.norm.eps)
-        if classifiers is None:
-            head_weight, head_bias = numpy(model.head.weight).T, numpy(model.head.bias)
-            classifiers = [("head10", head_weight[:, :10], head_bias[:10], "class", "head_out", None),
-                           ("head1000", head_weight, head_bias, "class", "head_out", "head_out")]
         self.classifiers = []
         for name, weight, bias, rows, target_key, fp_key in classifiers:
             add_linear(name, np.asarray(weight, dtype=np.float64), np.asarray(bias, dtype=np.float64))

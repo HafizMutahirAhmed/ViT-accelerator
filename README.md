@@ -7,10 +7,10 @@ products run on an 8 x 8 output-stationary systolic array; GELU, softmax,
 LayerNorm and the residual adds have their own units. Every module is checked
 bit for bit against a Python golden model.
 
-It runs on the **Digilent Nexys A7-100T**: 112 x 112 MNIST digits (50 tokens),
-the weights in the board's DDR2, the host on the USB-UART. The 224 x 224
-configuration (197 tokens, ImageNet photos) is for the **Opal Kelly
-XEM7310-A200**, which is not built yet; it is simulated.
+It runs on the **Digilent Nexys A7-100T**: MNIST digits at 112 x 112 (50
+tokens), the weights in the board's DDR2, the host on the USB-UART. The 224 x 224
+configuration (197 tokens, the model's own input size, also MNIST digits) is for
+the **Opal Kelly XEM7310-A200**, which is not built yet; it is simulated.
 
 - [docs/NEXYS_QUICKSTART.md](docs/NEXYS_QUICKSTART.md): from a clone to a digit on the Nexys A7
 - [docs/SPEC.md](docs/SPEC.md): project spec
@@ -88,6 +88,9 @@ bitstreams in `build/`.
   named relative to its own directory; `rtl/core/rom` is a symbolic link to
   `rtl/rom/opal_kelly`. The Nexys top passes its own files (`../rom/nexys/...`).
   The link does not survive a checkout on Windows without symlink support.
+- **The widest matmul output the engine allows, 1000 columns (`COLS_TOTAL_MAX`),
+  is no longer exercised** by the program testbenches: both boards now use
+  10-digit classifiers instead of DeiT-Tiny's 1000-class ImageNet head.
 - **Comments inside `rtl/core` still name `golden/gen_deit_forward.py`**, which
   is now `python/golden_model.py`. The files are frozen.
 
@@ -115,8 +118,8 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/pip install torch torchvision timm
 ```
 
-The first run downloads the DeiT-Tiny weights, MNIST (to `python/mnist/`) and
-the ImageNet sample photos (`scripts/fetch_images.sh`). Everything is
+The first run downloads the DeiT-Tiny weights and MNIST (to `python/mnist/`).
+Everything is
 deterministic: the scales and the classifiers come from `python/calibration/`,
 so two runs give byte-identical vectors and the ROM images that are committed.
 `make_model.py --recalibrate` works the scales out again; if that changes the

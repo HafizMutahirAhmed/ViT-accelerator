@@ -3,7 +3,8 @@
 **Not built.** The Nexys A7-100T (`boards/nexys_a7/`) is the finished board,
 with 112 x 112 MNIST digits. This page is for whoever takes the design to the
 XEM7310-A200 (Artix-7 XC7A200T, 1 GiB DDR3, USB 3.0 FrontPanel) to run the
-real DeiT-Tiny input size, 224 x 224 (197 tokens), on ImageNet photos.
+real DeiT-Tiny input size, 224 x 224 (197 tokens). Both boards take the same
+MNIST digits; here they are resized by 8 instead of 4.
 
 ## What already exists and is tested
 
@@ -31,11 +32,12 @@ program uses.
 
 1. **Make the model.**
    ```sh
-   scripts/fetch_images.sh                      # ImageNet sample photos, once
    .venv/bin/python python/make_model.py --board opal_kelly --layers 2
    ```
-   It writes `python/models/opal_kelly_L2/`. The classifier is the model's own
-   1000-class ImageNet head; no training is needed.
+   It writes `python/models/opal_kelly_L2/`, with the digit classifier of that
+   number of layers (trained the first time, kept in `python/calibration/`).
+   `python3 python/run_image.py --model --model-dir python/models/opal_kelly_L2
+   --digit 0` runs it on the software model of the board.
 
 2. **The top level**, `boards/opal_kelly/opal_kelly_top.sv`. Start from
    `boards/nexys_a7/nexys_top_ddr.sv` and change:
@@ -68,11 +70,10 @@ program uses.
 6. **Host software.**
    - `python/host.py`: a FrontPanel transport, a class with
      `write(bytes)` and `read(count)` like `SerialTransport`.
-   - `python/run_image.py` is written for the Nexys and MNIST digits. For
-     ImageNet photos, prepare the image with `golden_model.load_image`
-     (resize, centre crop, normalise), then `preprocess.im2col`, and take the
-     answer as the argmax of `head1000` instead of summing patch rows.
-     `host.py`, `host.py` and the `RUN` flow work unchanged.
+   - `python/run_image.py` works as it is (it takes the image size from the
+     model directory); give it the new transport where it opens the serial
+     port, and drop its check that a board must be the Nexys. The protocol,
+     the DDR image and the `RUN` flow in `host.py` work unchanged.
 
 7. **Test before the board.**
    - `scripts/regress.sh`: the 224 engine tests must still pass.
@@ -88,7 +89,6 @@ program uses.
   The MIG and the DMA need a few more; check the utilization report early.
 - **Time per image**: about 1.84 million engine cycles per layer at 197
   tokens (`python/board_model.py --program`), 18 ms at 100 MHz; 2 layers with
-  the embedding and the head take 4.19 million cycles, 42 ms.
-- **Accuracy**: the model's own head only gives sensible ImageNet answers
-  with all 12 layers; with fewer layers, compare against the FP32 model of the
-  same depth (`make_model.py --report` does that).
+  the embedding and the classifiers take 4.18 million cycles, 42 ms.
+- **Accuracy**: `make_model.py --report` prints it on 2,000 MNIST test digits
+  the scales and the classifier never saw.

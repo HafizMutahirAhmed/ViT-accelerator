@@ -312,8 +312,8 @@ The residual stream stays in the engine from phase to phase.
 | embed | 0..1 | patch embedding as a 197x768 @ 768x192 matmul on the im2col input with a zero row 0, then one residual add of a constant 197x192 tensor (class token and position embedding) | 475,245 |
 | L0 | 2..27 | encoder layer 0, 26 ops | 1,844,272 |
 | L1 | 28..53 | encoder layer 1, 26 ops | 1,844,272 |
-| final | 54..56 | final LayerNorm on the class row, 1000-class head, 10-class head | 26,892 |
-| all | 57 of 256 | | 4,190,681 |
+| final | 54..56 | final LayerNorm on every row, the two 10-digit classifiers (every row, the class row) | 20,940 |
+| all | 57 of 256 | | 4,184,729 |
 
 A layer is, in this order: LN1; Q, K, V of each head (9 matmuls); S = Q @ K^T
 of each head; softmax of each head; O = P @ V of each head; output projection;

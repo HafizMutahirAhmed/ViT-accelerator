@@ -2,14 +2,15 @@
 
 Usage: .venv/bin/python python/make_model.py --board nexys --layers 2      (needs torch, timm, torchvision)
 
-  --board nexys         Digilent Nexys A7-100T: 112 x 112 MNIST digits (50 tokens), a digit
-                        classifier trained here (a linear probe on every row)
-  --board opal_kelly    Opal Kelly XEM7310-A200: 224 x 224 ImageNet photos (197 tokens), the
-                        model's own 1000-class head
+  --board nexys         Digilent Nexys A7-100T: MNIST digits resized to 112 x 112 (50 tokens)
+  --board opal_kelly    Opal Kelly XEM7310-A200: MNIST digits resized to 224 x 224 (197 tokens),
+                        the model's own input size
+                        Both use a digit classifier trained here (a linear probe on every row,
+                        the host sums the patch rows), one per board and number of layers
   --layers N            1 .. 12 encoder layers
   --recalibrate         work the tensor scales out again and rewrite
                         python/calibration/<board>_scales.json (they cover all 12 layers)
-  --retrain             nexys: train the digit classifier of N layers again
+  --retrain             train the digit classifier of N layers again
   --report              also print the accuracy on test images the scales and the classifier
                         never saw
 
@@ -20,7 +21,7 @@ every matmul on its own (tb_matmul_engine_opal_kelly).
 
 Kept in the repo, made here when missing:
   python/calibration/<board>_scales.json       the scale of every tensor, all 12 layers
-  python/calibration/nexys_L<N>_probe.npz      the digit classifier of N layers
+  python/calibration/<board>_L<N>_probe.npz    the digit classifier of N layers
   rtl/rom/<board>/                             the engine's tables (GELU, exp, 1/sqrt) for all
                                                12 layers; they are part of the bitstream. If the
                                                tables change (a recalibration), the script says
@@ -34,7 +35,6 @@ does not fit them. Any number of layers fits; the image size is the board's.
 import deterministic  # noqa: F401  (first: it sets the thread counts)
 
 import argparse
-import glob
 import json
 import os
 import sys
@@ -64,15 +64,12 @@ BOARDS = {
                        top="not built yet; tb_encoder_program uses these depths"),
 }
 
-# MNIST digits (nexys)
+# MNIST digits, both boards (torchvision downloads them on the first run)
 MNIST_DIR = os.path.join(HOST_DIR, "mnist")
 MNIST_CALIBRATION = range(0, 128)        # train digits: the scales
 MNIST_PROBE_TRAIN = range(128, 6128)     # train digits: the classifier
 MNIST_EVALUATION = range(0, 2000)        # test digits: the accuracy
 MNIST_TEST_IMAGE = 0                     # test digit of the golden vectors
-# ImageNet sample photos (opal_kelly), from scripts/fetch_images.sh
-IMAGENET_CALIBRATION = os.path.join(HOST_DIR, "images_calibration")
-IMAGENET_HELDOUT = (os.path.join(HOST_DIR, "images"), os.path.join(HOST_DIR, "images_heldout"))
 
 
 def progress(what, done, total):
@@ -87,51 +84,36 @@ def load_model(board):
     for block in model.blocks:
         block.attn.fused_attn = False  # so the softmax output passes through attn_drop
     assert model.pos_embed.shape[1] == BOARDS[board]["tokens"]
-    if board == "nexys":
-        assert tuple(model.pretrained_cfg["mean"]) == preprocess.MEAN
-        assert tuple(model.pretrained_cfg["std"]) == preprocess.STD
+    assert tuple(model.pretrained_cfg["mean"]) == preprocess.MEAN
+    assert tuple(model.pretrained_cfg["std"]) == preprocess.STD
     return model
 
 
 class Data:
-    """The board's images: calibration, the test image, evaluation. image() gives a torch image tensor."""
+    """MNIST: calibration digits, the test digit, evaluation digits. An item is (split, index)."""
 
-    def __init__(self, board, model):
-        self.board = board
-        if board == "nexys":
-            import torchvision
-            self.train = torchvision.datasets.MNIST(MNIST_DIR, train=True, download=True)
-            self.test = torchvision.datasets.MNIST(MNIST_DIR, train=False, download=True)
-            self.calibration = [("train", index) for index in MNIST_CALIBRATION]
-            self.test_image = ("test", MNIST_TEST_IMAGE)
-            self.evaluation = [("test", index) for index in MNIST_EVALUATION]
-        else:
-            self.cfg = model.pretrained_cfg
-            self.calibration = sorted(glob.glob(os.path.join(IMAGENET_CALIBRATION, "*.JPEG")))
-            heldout = [name for directory in IMAGENET_HELDOUT
-                       for name in sorted(glob.glob(os.path.join(directory, "*.JPEG")))]
-            if not self.calibration or not heldout:
-                raise SystemExit("ImageNet images missing: run scripts/fetch_images.sh")
-            self.test_image, self.evaluation = heldout[0], heldout
-            self.synsets = timm.data.ImageNetInfo("imagenet-1k").label_names()
+    def __init__(self, board):
+        import torchvision
+        self.size = BOARDS[board]["size"]
+        self.train = torchvision.datasets.MNIST(MNIST_DIR, train=True, download=True)
+        self.test = torchvision.datasets.MNIST(MNIST_DIR, train=False, download=True)
+        self.calibration = [("train", index) for index in MNIST_CALIBRATION]
+        self.test_image = ("test", MNIST_TEST_IMAGE)
+        self.evaluation = [("test", index) for index in MNIST_EVALUATION]
 
-    def pixels(self, item):
-        split, index = item
-        return (self.train if split == "train" else self.test).data[index].numpy()
+    def split(self, item):
+        return self.train if item[0] == "train" else self.test
 
     def image(self, item):
-        if self.board == "nexys":
-            return torch.from_numpy(preprocess.image_tensor(self.pixels(item))).unsqueeze(0)
-        return golden.load_image(item, self.cfg)
+        """The torch image tensor of a digit, resized to the board's size."""
+        pixels = self.split(item).data[item[1]].numpy()
+        return torch.from_numpy(preprocess.image_tensor(pixels, self.size)).unsqueeze(0)
 
     def label(self, item):
-        if self.board == "nexys":
-            split, index = item
-            return int((self.train if split == "train" else self.test).targets[index])
-        return self.synsets.index(os.path.basename(item).split("_")[0])
+        return int(self.split(item).targets[item[1]])
 
     def name(self, item):
-        return f"MNIST {item[0]} digit {item[1]}" if self.board == "nexys" else os.path.basename(item)
+        return f"MNIST {item[0]} digit {item[1]}"
 
 
 def embed_in(image):
@@ -139,40 +121,33 @@ def embed_in(image):
     return preprocess.im2col(image[0].numpy())
 
 
-def calibrate(board, model, data):
-    """Scale of every tensor: its largest magnitude over the calibration images / 127, for all 12 layers,
-    and of the final LayerNorm and the model's head after each N (keys "head_in@N", "head_out@N")."""
-    final_rows = "all" if board == "nexys" else "class"
+def calibrate(model, data):
+    """Scale of every tensor: its largest magnitude over the calibration digits / 127, for all 12 layers,
+    and of the final LayerNorm after each N (keys "head_in@N")."""
     largest = {}
 
     def see(key, tensor):
         largest[key] = max(largest.get(key, 0.0), float(np.abs(tensor).max()))
 
-    head_weight = model.head.weight.detach().numpy().astype(np.float64).T
-    head_bias = model.head.bias.detach().numpy().astype(np.float64)
     for count, item in enumerate(data.calibration):
-        fp = golden.capture(model, data.image(item), golden.MAX_LAYERS, final_rows)
+        fp = golden.capture(model, data.image(item), golden.MAX_LAYERS)
         for key, tensor in fp.items():
-            if key not in ("head_in", "head_out", "logits_full"):
+            if key != "head_in":
                 see(key, tensor)
         for layers in range(1, golden.MAX_LAYERS + 1):
             with torch.no_grad():
-                head_in = model.norm(torch.from_numpy(fp[f"L{layers - 1}_x_out"]).float()).numpy().astype(np.float64)
-            head_in = head_in if final_rows == "all" else head_in[0:1]
-            see(f"head_in@{layers}", head_in)
-            if board == "opal_kelly":
-                see(f"head_out@{layers}", head_in @ head_weight + head_bias)
-        progress("calibration images", count + 1, len(data.calibration))
+                see(f"head_in@{layers}", model.norm(torch.from_numpy(fp[f"L{layers - 1}_x_out"]).float()).numpy())
+        progress("calibration digits", count + 1, len(data.calibration))
     return {key: value / DATA_MAX for key, value in largest.items()}
 
 
-def probe_file(layers):
-    return os.path.join(CALIBRATION_DIR, f"nexys_L{layers}_probe.npz")
+def probe_file(board, layers):
+    return os.path.join(CALIBRATION_DIR, f"{board}_L{layers}_probe.npz")
 
 
-def features(parameters, data, items):
-    """Final LayerNorm output of the integer pass for every item, as real numbers: (items, 50, 192)."""
-    out = np.zeros((len(items), BOARDS["nexys"]["tokens"], 192))
+def features(parameters, data, items, tokens):
+    """Final LayerNorm output of the integer pass for every item, as real numbers: (items, tokens, 192)."""
+    out = np.zeros((len(items), tokens, 192))
     for position, item in enumerate(items):
         tensor, scale = golden.Forward(parameters).run(embed_in(data.image(item))).stage("final_ln")
         out[position] = tensor * scale
@@ -180,12 +155,12 @@ def features(parameters, data, items):
     return out
 
 
-def train_probe(model, data, target, layers):
+def train_probe(board, model, data, target, layers):
     """The digit classifier on the features of the integer N-layer pass: two linear layers 192 x 10, one
     on the mean of the 49 patch rows (applied by the engine to every row; the host sums the patch rows)
     and one on the class row. Trained with multinomial logistic regression."""
     parameters = golden.Model(model, target, layers, classifiers=[], final_all_rows=True)
-    train_x = features(parameters, data, [("train", index) for index in MNIST_PROBE_TRAIN])
+    train_x = features(parameters, data, [("train", index) for index in MNIST_PROBE_TRAIN], BOARDS[board]["tokens"])
     train_y = data.train.targets[list(MNIST_PROBE_TRAIN)].numpy()
 
     def fit(x_real, y):
@@ -211,45 +186,34 @@ def train_probe(model, data, target, layers):
     # output scales: the largest score any row produces on the training digits
     mean_scale = float(np.abs(train_x @ mean_weight + mean_bias).max()) / DATA_MAX
     class_scale = float(np.abs(train_x[:, 0] @ class_weight + class_bias).max()) / DATA_MAX
-    np.savez(probe_file(layers), mean_weight=mean_weight, mean_bias=mean_bias, class_weight=class_weight,
+    np.savez(probe_file(board, layers), mean_weight=mean_weight, mean_bias=mean_bias, class_weight=class_weight,
              class_bias=class_bias, mean_scale=mean_scale, class_scale=class_scale)
-    print(f"  wrote {os.path.relpath(probe_file(layers), REPO_DIR)} (trained on {len(train_y)} digits)")
+    print(f"  wrote {os.path.relpath(probe_file(board, layers), REPO_DIR)} (trained on {len(train_y)} digits)")
 
 
-def load_probe(layers):
+def load_probe(board, layers):
     """The digit classifier of N layers: classifiers for golden.Model and their output scales."""
-    probe = np.load(probe_file(layers))
+    probe = np.load(probe_file(board, layers))
     classifiers = [("head_mean", probe["mean_weight"], probe["mean_bias"], "all", "head_mean_out", None),
                    ("head_class", probe["class_weight"], probe["class_bias"], "class", "head_class_out", None)]
     scales = {"head_mean_out": float(probe["mean_scale"]), "head_class_out": float(probe["class_scale"])}
     return classifiers, scales
 
 
-def answer(board, forward):
-    """The answer of a pass: nexys sums the 49 patch rows of head_mean, like the host."""
-    if board == "nexys":
-        return int(np.argmax(forward.stage("head_mean")[0][1:].sum(0)))
-    return int(np.argmax(forward.stage("head1000")[0][0]))
+def answer(forward):
+    """The digit a pass sees: the sum of the patch rows of head_mean, as the host takes it."""
+    return int(np.argmax(forward.stage("head_mean")[0][1:].sum(0)))
 
 
-def report(board, model, data, parameters, layers):
-    """Accuracy of the integer pass on images the scales and the classifier never saw."""
-    right = agree = 0
+def report(data, parameters, layers):
+    """Accuracy of the integer pass on test digits the scales and the classifier never saw."""
+    right = 0
     for count, item in enumerate(data.evaluation):
-        image = data.image(item)
-        forward = golden.Forward(parameters).run(embed_in(image))
-        right += answer(board, forward) == data.label(item)
-        if board == "opal_kelly":
-            fp = golden.capture(model, image, layers, "class")
-            agree += answer(board, forward) == int(np.argmax(fp["head_out"]))
-        progress("report images", count + 1, len(data.evaluation))
+        right += answer(golden.Forward(parameters).run(embed_in(data.image(item)))) == data.label(item)
+        progress("report digits", count + 1, len(data.evaluation))
     count = len(data.evaluation)
-    if board == "nexys":
-        print(f"accuracy of the {layers}-layer integer model: {right} of {count} test digits "
-              f"({100.0 * right / count:.1f}%)")
-    else:
-        print(f"{layers}-layer integer model: top-1 equal to the FP32 {layers}-layer model on {agree} of {count} "
-              f"held-out photos, equal to the label on {right}")
+    print(f"accuracy of the {layers}-layer integer model: {right} of {count} test digits "
+          f"({100.0 * right / count:.1f}%)")
 
 
 def write_roms(board, model, scales, embed_in_real, forward):
@@ -289,22 +253,19 @@ def main():
     deterministic.setup()
 
     model = load_model(board)
-    data = Data(board, model)
+    data = Data(board)
     os.makedirs(CALIBRATION_DIR, exist_ok=True)
     scales_file = os.path.join(CALIBRATION_DIR, f"{board}_scales.json")
     if args.recalibrate or not os.path.exists(scales_file):
-        golden.save_scales(scales_file, calibrate(board, model, data))
+        golden.save_scales(scales_file, calibrate(model, data))
         print(f"calibrated: wrote {os.path.relpath(scales_file, REPO_DIR)}")
     scales = golden.load_scales(scales_file)
     target = golden.target_for(scales, layers)
 
-    if board == "nexys":
-        if args.retrain or args.recalibrate or not os.path.exists(probe_file(layers)):
-            train_probe(model, data, target, layers)
-        classifiers, probe_scales = load_probe(layers)
-        target = dict(target, **probe_scales)
-    else:
-        classifiers = None
+    if args.retrain or args.recalibrate or not os.path.exists(probe_file(board, layers)):
+        train_probe(board, model, data, target, layers)
+    classifiers, probe_scales = load_probe(board, layers)
+    target = dict(target, **probe_scales)
     parameters = golden.Model(model, target, layers, classifiers=classifiers)
 
     # the test image through the integer pass: the golden tensors and the program
@@ -330,11 +291,11 @@ def main():
                    "input_scale": target["embed_in"], "rom_dir": f"rtl/rom/{board}", "depths": spec["depths"],
                    "test_image": data.name(data.test_image)}, f, indent=1)
     with open(os.path.join(out_dir, "expected_answer.txt"), "w") as f:
-        f.write(f"{label} {answer(board, forward)}\n")
+        f.write(f"{label} {answer(forward)}\n")
     print(f"wrote python/models/{board}_L{layers}: {layers} layers, test image {data.name(data.test_image)}, "
-          f"label {label}, answer {answer(board, forward)}")
+          f"label {label}, answer {answer(forward)}")
     if args.report:
-        report(board, model, data, parameters, layers)
+        report(data, parameters, layers)
 
 
 if __name__ == "__main__":

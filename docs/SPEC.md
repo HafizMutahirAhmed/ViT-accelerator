@@ -32,11 +32,12 @@ holds for all 12 layers.
 
 | `--board` | `opal_kelly` | `nexys` |
 |---|---|---|
-| Input | 224 x 224, ImageNet images | 112 x 112, MNIST digits resized by 4 |
+| Input | 224 x 224, MNIST digits resized by 8 (the model's own input size) | 112 x 112, MNIST digits resized by 4 |
 | Tokens | 197 | 50 (position embedding resampled) |
-| Classifier | the model's own head on the class row | linear probe on every row, summed over the patch rows by the host, trained per N |
+| Classifier | linear probe on every row, summed over the patch rows by the host, trained per board and N | the same |
 | Weights in the engine | one layer at a time | one group of matmuls at a time; fc1, fc2 and the patch embedding in two column chunks |
 | Descriptor program | 2 + 26 N + 3 ops | 3 + 28 N + 3 ops (62 for 2 layers, 342 for 12) |
+| Data | MNIST for both: 128 training digits calibrate the scales, 6,000 train the classifier, 2,000 test digits give the accuracy | |
 | Fits | XC7A200T (326 of 365 block RAM tiles) | XC7A100T |
 | Used for | simulation; the XEM7310 later | the Nexys A7-100T |
 

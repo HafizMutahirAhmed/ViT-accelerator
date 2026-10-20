@@ -18,12 +18,9 @@ xsim.dir/
 *.wdb
 *.pb
 
-# Vectors, models and images: scripts/gen_vectors.sh regenerates all of them
+# Vectors, models and MNIST: scripts/gen_vectors.sh regenerates all of them
 python/vectors/
 python/models/
-python/images/
-python/images_calibration/
-python/images_heldout/
 python/mnist/
 
 # Python

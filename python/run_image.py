@@ -286,8 +286,9 @@ def main():
         parser.error("give --digit or --png (or --ping)")
 
     program = Program(args.model_dir)
-    if program.config["board"] != "nexys":
-        parser.error(f"{args.model_dir} is a {program.config['board']} model; this script runs the Nexys A7")
+    if program.config["board"] != "nexys" and not args.model:
+        parser.error(f"{args.model_dir} is a {program.config['board']} model: only --model runs it, the serial port "
+                     f"is the Nexys A7's")
     print(f"model {os.path.basename(os.path.normpath(args.model_dir))}: {program.config['layers']} layers, "
           f"{len(program.phases)} phases")
     label = None
