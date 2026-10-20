@@ -59,8 +59,8 @@ how long `make_model.py` takes the first time:
 | 1, 3, 4, 5, 7, 8, 9, 10, 11 | made the first time | 15 to 60 minutes once, seconds after | the same mechanism as 2, 6 and 12 |
 
 Then run it with `--model-dir python/models/nexys_L<N>`, for example
-`nexys_L8`. A model of up to 9 layers (at most 256 descriptors) loads its
-descriptors once; 10 to 12 layers load them phase by phase, as the 12-layer
+`nexys_L8`. A model of up to 8 layers (at most 256 descriptors) loads its
+descriptors once; 9 to 12 layers load them phase by phase, as the 12-layer
 model does.
 
 ## Build
