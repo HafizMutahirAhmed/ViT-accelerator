@@ -12,7 +12,7 @@
 // cleared the pool buffers, wrote the image to DDR and sent one RUN; the
 // bridge then fetched every entry of the list from DDR and ran it: a DMA load
 // per LOAD, a start and a wait for done per START. The RUN response carries
-// the total busy cycles, which must equal the model's (python/cycle_model.py),
+// the total busy cycles, which must equal the model's (python/board_model.py),
 // like every other response byte. Then the scores are read back.
 //
 // No beat may be lost or doubled: the engine must see exactly one write per

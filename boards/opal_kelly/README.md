@@ -56,7 +56,7 @@ program uses.
    settings for the board). The DMA, SmartConnect and the address map
    (DMA at 0x4040_0000, DDR at 0x8000_0000) can stay. The weights do not
    grow with the image size: 2 layers take about 1.3 MB of DDR, 12 layers
-   about 6 MB, far below the 128 MiB `python/protocol.py` assumes (`DDR_BYTES`).
+   about 6 MB, far below the 128 MiB `python/host.py` assumes (`DDR_BYTES`).
 
 4. **Constraints.** Pins from Opal Kelly's XEM7310 constraint file, as the
    Nexys's come from Digilent's (`boards/nexys_a7/nexys_a7_ddr.xdc` shows the
@@ -66,13 +66,13 @@ program uses.
    `scripts/build_nexys_ddr.tcl`; part `xc7a200tfbg484-1`.
 
 6. **Host software.**
-   - `python/transports.py`: a FrontPanel transport, a class with
+   - `python/host.py`: a FrontPanel transport, a class with
      `write(bytes)` and `read(count)` like `SerialTransport`.
    - `python/run_image.py` is written for the Nexys and MNIST digits. For
      ImageNet photos, prepare the image with `golden_model.load_image`
      (resize, centre crop, normalise), then `preprocess.im2col`, and take the
      answer as the argmax of `head1000` instead of summing patch rows.
-     `ddr_image.py`, `protocol.py` and the `RUN` flow work unchanged.
+     `host.py`, `host.py` and the `RUN` flow work unchanged.
 
 7. **Test before the board.**
    - `scripts/regress.sh`: the 224 engine tests must still pass.
@@ -87,7 +87,7 @@ program uses.
 - **Block RAM is tight**: about 330 of 365 tiles before the memory system.
   The MIG and the DMA need a few more; check the utilization report early.
 - **Time per image**: about 1.84 million engine cycles per layer at 197
-  tokens (`python/cycle_model.py --program`), 18 ms at 100 MHz; 2 layers with
+  tokens (`python/board_model.py --program`), 18 ms at 100 MHz; 2 layers with
   the embedding and the head take 4.19 million cycles, 42 ms.
 - **Accuracy**: the model's own head only gives sensible ImageNet answers
   with all 12 layers; with fewer layers, compare against the FP32 model of the

@@ -43,10 +43,10 @@ import torch
 from PIL import Image
 
 import layer_program
-from int8_ops import ACC_MAX, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH, add_bias, requantize, write_hex
-from nonlinear_ops import (LayerNormConfig, SoftmaxConfig, add_constants, exp_table, gelu, gelu_table, layernorm,
+from int8_model import ACC_MAX, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH, add_bias, requantize, write_hex
+from int8_model import (LayerNormConfig, SoftmaxConfig, add_constants, exp_table, gelu, gelu_table, layernorm,
                            layernorm_constants, pick_multiplier, residual_add, rsqrt_table, softmax)
-from pkg_config import PARAMS, pack_descriptor
+from int8_model import PARAMS, pack_descriptor
 
 MODEL_NAME = "deit_tiny_patch16_224.fb_in1k"
 MAX_LAYERS = 12
@@ -227,7 +227,7 @@ class Model:
 
 
 def matmul(a, b):
-    """int8_ops.matmul_acc, but through float64 for speed. Exact: every sum is far below 2**53."""
+    """int8_model.matmul_acc, but through float64 for speed. Exact: every sum is far below 2**53."""
     acc = np.rint(a.astype(np.float64) @ b.astype(np.float64)).astype(np.int64)
     assert np.abs(acc).max() <= ACC_MAX
     return acc

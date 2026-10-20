@@ -50,7 +50,7 @@ sys.path.insert(0, HOST_DIR)
 import golden_model as golden  # noqa: E402
 import layer_program  # noqa: E402
 import preprocess  # noqa: E402
-from int8_ops import DATA_MAX, write_hex  # noqa: E402
+from int8_model import DATA_MAX, write_hex  # noqa: E402
 
 CALIBRATION_DIR = os.path.join(HOST_DIR, "calibration")
 

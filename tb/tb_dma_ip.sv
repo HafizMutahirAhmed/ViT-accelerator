@@ -21,7 +21,7 @@
 // unknown kind, which the bridge must refuse after doing the first). Every
 // response byte must equal the model's, and the engine must see one write per
 // item of every DMA_LOAD and of every LOAD entry the RUNs carry out
-// (host_stream_ddrcheck_summary.txt, as ddr_image.run_totals counts them).
+// (host_stream_ddrcheck_summary.txt, as host.run_totals counts them).
 //
 // Run with scripts/sim_dma_ip.sh, not sim.sh: it needs the DMA's libraries.
 // Vectors: python/models/nexys_L2/host_stream_ddrcheck_*.

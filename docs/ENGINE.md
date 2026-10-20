@@ -86,12 +86,12 @@ copy. The frozen version is tagged `engine-v1.1`.
 | Product `acc * scale` | kept at the full 40 bits |
 | Clip | to -128..127 |
 
-`python/int8_ops.py` is the bit-exact reference for all of this.
+`python/int8_model.py` is the bit-exact reference for all of this.
 
 ## Descriptor format
 
 One op is one `descriptor_t`, a packed struct in `vit_config_pkg`. This table
-is generated from the package by `python3 python/pkg_config.py`; regenerate it
+is generated from the package by `python3 python/int8_model.py`; regenerate it
 after changing the struct.
 
 | Field | Bits | Width | Meaning |
@@ -121,7 +121,7 @@ The struct is 153 bits. In the descriptor memory it sits in the low bits of a
 31:0. The field widths follow the package maximums through `$clog2`, so they
 change if those maximums change.
 
-`python/pkg_config.py` parses the package, so `pack_descriptor()` in Python and
+`python/int8_model.py` parses the package, so `pack_descriptor()` in Python and
 the RTL always agree. `python/gen_vectors.py` and `python/golden_model.py`
 emit tables with it.
 
@@ -195,7 +195,7 @@ length), `activation_buffer_id` and `activation_base` (the operand),
 `output_buffer_id`, `output_base`, `output_stride` and `last_op`.
 
 - **Arithmetic** is in the header of each module and, bit for bit, in
-  `python/nonlinear_ops.py`.
+  `python/int8_model.py`.
 - **In place.** A row op may write to the buffer it reads; a word is written
   only after it was read. The two operands of an add must be in different
   buffers. The checks are per opcode.
@@ -211,7 +211,7 @@ length), `activation_buffer_id` and `activation_base` (the operand),
   and softmax need a row longer than 6 elements.
 
 Cycles for one op, with tiles = ceil(rows / SYS_ROW) and N the row length
-(`python/cycle_model.py`, equal to the simulation):
+(`python/board_model.py`, equal to the simulation):
 
 | Op | Cycles | 197 rows |
 |---|---|---|
@@ -277,7 +277,7 @@ For one op on a SYS_ROW x SYS_COL array:
              + 2 + REQUANTIZE_LATENCY     drain pipeline
              + POOL_WRITE_LATENCY
 
-At 8x8 the overhead is 25 cycles. `python/cycle_model.py` implements this
+At 8x8 the overhead is 25 cycles. `python/board_model.py` implements this
 formula and checks it against a simulation log; it matches all 39 DeiT-Tiny
 ops exactly.
 

@@ -1,4 +1,22 @@
-"""Integer reference models of the non-linear ops: residual add, GELU, LayerNorm, softmax.
+"""The engine's arithmetic in Python, bit for bit: integer ops, the non-linear ops, the package parameters.
+
+The RTL's arithmetic is defined here; golden_model.py, board_model.py and gen_vectors.py use it.
+Run it (python3 python/int8_model.py) to print the descriptor layout as a Markdown table.
+
+--- int8 ops: Bit-exact integer models of the accelerator datapath.
+
+Every function here does the arithmetic the RTL does, on integers only (no
+floats), so its results can be compared bit-for-bit with simulation.
+
+Fixed-point formats
+  data  : signed INT8  (DATA_WIDTH  = 8)
+  acc   : signed INT32 (ACC_WIDTH   = 32), wraps modulo 2**32 like the RTL adder
+  bias  : signed INT32 (ACC_WIDTH   = 32), one per output column, at the same
+          scale as acc; added to acc at drain, before the requantizer
+  scale : signed INT8  (SCALE_WIDTH = 8), so a positive scale is 1..127
+  shift : unsigned, SHIFT_WIDTH = $clog2(ACC_WIDTH) = 5 bits, 0..31
+
+--- nonlinear ops: Integer reference models of the non-linear ops: residual add, GELU, LayerNorm, softmax.
 
 The op functions (residual_add, gelu, layernorm, softmax) work on integers
 only, so RTL can be compared with them bit for bit. The table and constant
@@ -9,13 +27,119 @@ host computes once and loads, like the weights.
 Data is signed INT8 as everywhere else. Each op states its intermediate widths;
 the functions check them, so a width that is too small raises an error instead
 of silently wrapping.
+
+--- pkg config: Reads rtl/core/vit_config_pkg.sv so the golden model and the RTL share one definition.
+
+PARAMS holds every package parameter as an int. DESCRIPTOR_FIELDS lists the
+fields of descriptor_t as (name, width, signed), most significant first, the
+same order as the packed struct.
 """
 
+import os
+import re
 from math import erf, exp, sqrt
 
 import numpy as np
 
-from int8_ops import DATA_MAX, DATA_MIN, DATA_WIDTH, SCALE_MAX, SHIFT_MAX, _check_range
+
+# ============================================================================
+# int8 ops
+# ============================================================================
+
+DATA_WIDTH = 8
+ACC_WIDTH = 32
+SCALE_WIDTH = 8
+SHIFT_WIDTH = (ACC_WIDTH - 1).bit_length()  # $clog2(ACC_WIDTH)
+
+DATA_MIN, DATA_MAX = -(1 << (DATA_WIDTH - 1)), (1 << (DATA_WIDTH - 1)) - 1
+ACC_MIN, ACC_MAX = -(1 << (ACC_WIDTH - 1)), (1 << (ACC_WIDTH - 1)) - 1
+SCALE_MIN, SCALE_MAX = -(1 << (SCALE_WIDTH - 1)), (1 << (SCALE_WIDTH - 1)) - 1
+SHIFT_MAX = (1 << SHIFT_WIDTH) - 1
+
+
+def _check_range(name, x, lo, hi):
+    x = np.asarray(x, dtype=np.int64)
+    if x.size and (x.min() < lo or x.max() > hi):
+        raise ValueError(f"{name} out of range [{lo}, {hi}]: min={x.min()} max={x.max()}")
+    return x
+
+
+def wrap_signed(x, width):
+    """Truncate to `width` bits and reinterpret as two's complement."""
+    x = np.asarray(x, dtype=np.int64)
+    half = 1 << (width - 1)
+    return ((x + half) & ((1 << width) - 1)) - half
+
+
+def matmul_acc(a, b):
+    """C = A @ B with INT8 operands and an INT32 wrapping accumulator.
+
+    a: (M, K) int8, b: (K, N) int8 -> (M, N) int32.
+    Each PE computes acc <= acc + a*b over the full K dimension. Addition
+    modulo 2**32 is associative, so the result does not depend on the order
+    in which the array visits k, nor on how the matmul is tiled.
+    """
+    a = _check_range("a", a, DATA_MIN, DATA_MAX)
+    b = _check_range("b", b, DATA_MIN, DATA_MAX)
+    if a.ndim != 2 or b.ndim != 2 or a.shape[1] != b.shape[0]:
+        raise ValueError(f"shape mismatch: {a.shape} @ {b.shape}")
+    return wrap_signed(a @ b, ACC_WIDTH)
+
+
+def add_bias(acc, bias):
+    """acc[m][n] + bias[n], the add done at SA drain.
+
+    acc: (M, N) int32, bias: (N,) int32 -> (M, N) int32. The adder is
+    ACC_WIDTH bits wide, so the sum wraps modulo 2**32; it does not saturate.
+    """
+    acc = _check_range("acc", acc, ACC_MIN, ACC_MAX)
+    bias = _check_range("bias", bias, ACC_MIN, ACC_MAX)
+    if acc.ndim != 2 or bias.shape != (acc.shape[1],):
+        raise ValueError(f"shape mismatch: acc {acc.shape}, bias {bias.shape}")
+    return wrap_signed(acc + bias, ACC_WIDTH)
+
+
+def linear_acc(a, b, bias):
+    """Linear op before requantization: A @ B + bias[col], INT32."""
+    return add_bias(matmul_acc(a, b), bias)
+
+
+def requantize(acc, scale, shift):
+    """out = clip((acc * scale) >>> shift) to INT8.
+
+    The product is kept at full ACC_WIDTH + SCALE_WIDTH = 40 bits, so it never
+    overflows. `>>>` is an arithmetic shift: it floors (rounds toward minus
+    infinity) and adds no rounding offset. scale and shift may be scalars or
+    arrays that broadcast against acc.
+    """
+    acc = _check_range("acc", acc, ACC_MIN, ACC_MAX)
+    scale = _check_range("scale", scale, SCALE_MIN, SCALE_MAX)
+    shift = _check_range("shift", shift, 0, SHIFT_MAX)
+    prod = acc * scale
+    shifted = np.right_shift(prod, shift)  # arithmetic on signed int64
+    return np.clip(shifted, DATA_MIN, DATA_MAX)
+
+
+def write_hex(path, values, width):
+    """Write a $readmemh file: one two's-complement word per line, row-major."""
+    digits = (width + 3) // 4
+    mask = (1 << width) - 1
+    flat = np.asarray(values, dtype=np.int64).reshape(-1)
+    with open(path, "w") as f:
+        for v in flat:
+            f.write(f"{int(v) & mask:0{digits}x}\n")
+
+
+def read_hex(path, width):
+    """Read a file written by write_hex back into signed int64 values."""
+    with open(path) as f:
+        raw = np.array([int(line, 16) for line in f if line.strip()], dtype=np.int64)
+    return wrap_signed(raw, width)
+
+
+# ============================================================================
+# nonlinear ops
+# ============================================================================
 
 ROW_WIDTH = 192          # LayerNorm row length (the embedding width)
 
@@ -337,3 +461,119 @@ def softmax(scores, table, config, recip_table=None, widths=None, numerator=None
         for key, value in (("quotient", quotient), ("product", product), ("total", total)):
             widths[key] = max(widths.get(key, 0), int(np.abs(value).max()))
     return np.minimum(out, DATA_MAX)
+
+
+# ============================================================================
+# pkg config
+# ============================================================================
+
+PACKAGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "rtl", "core", "vit_config_pkg.sv")
+
+
+def _clog2(value):
+    return (value - 1).bit_length()
+
+
+def _evaluate(expr, params, struct_widths):
+    expr = re.sub(r"\$bits\((\w+)\)", lambda m: str(struct_widths[m.group(1)]), expr)
+    expr = re.sub(r"\d+'([bdh])([0-9a-fA-F]+)",
+                  lambda m: str(int(m.group(2), {"b": 2, "d": 10, "h": 16}[m.group(1)])), expr)
+    expr = expr.replace("$clog2", "clog2").replace("/", "//")
+    return int(eval(expr, {"__builtins__": {}}, {**params, "clog2": _clog2}))
+
+
+def _load():
+    with open(PACKAGE_FILE) as f:
+        text = re.sub(r"//[^\n]*", "", f.read())
+    params, structs, struct_widths = {}, {}, {}
+    statement = re.compile(
+        r"parameter\s+(?P<name>\w+)\s*=\s*(?P<expr>[^;]+);"
+        r"|typedef\s+struct\s+packed\s*\{(?P<body>.*?)\}\s*(?P<struct>\w+)\s*;", re.S)
+    field = re.compile(r"logic\s*(signed)?\s*(?:\[([^\]]+):0\])?\s*(\w+)\s*;")
+    for m in statement.finditer(text):
+        if m.group("name"):
+            params[m.group("name")] = _evaluate(m.group("expr"), params, struct_widths)
+        else:
+            fields = [(name, _evaluate(msb, params, struct_widths) + 1 if msb else 1, bool(signed))
+                      for signed, msb, name in field.findall(m.group("body"))]
+            structs[m.group("struct")] = fields
+            struct_widths[m.group("struct")] = sum(width for _, width, _ in fields)
+    return params, structs
+
+
+PARAMS, _STRUCTS = _load()
+DESCRIPTOR_FIELDS = _STRUCTS["descriptor_t"]
+
+assert PARAMS["DESCRIPTOR_WIDTH"] == sum(width for _, width, _ in DESCRIPTOR_FIELDS)
+
+
+def pack_descriptor(**values):
+    """Pack one descriptor into DESCRIPTOR_WORDS 32-bit words, word 0 least significant."""
+    names = [name for name, _, _ in DESCRIPTOR_FIELDS]
+    if set(values) != set(names):
+        raise ValueError(f"descriptor fields differ from the package: {sorted(set(values) ^ set(names))}")
+    packed = 0
+    for name, width, signed in DESCRIPTOR_FIELDS:
+        value = int(values[name])
+        lo, hi = (-(1 << (width - 1)), (1 << (width - 1)) - 1) if signed else (0, (1 << width) - 1)
+        if not lo <= value <= hi:
+            raise ValueError(f"descriptor field {name}={value} does not fit {width} bits")
+        packed = (packed << width) | (value & ((1 << width) - 1))
+    return [(packed >> (32 * i)) & 0xFFFFFFFF for i in range(PARAMS["DESCRIPTOR_WORDS"])]
+
+
+def unpack_descriptor(words):
+    """The inverse of pack_descriptor: 32-bit words, word 0 least significant, to a dict."""
+    packed = sum(int(word) << (32 * i) for i, word in enumerate(words))
+    values, position = {}, PARAMS["DESCRIPTOR_WIDTH"]
+    for name, width, signed in DESCRIPTOR_FIELDS:
+        position -= width
+        value = (packed >> position) & ((1 << width) - 1)
+        if signed and value >> (width - 1):
+            value -= 1 << width
+        values[name] = value
+    return values
+
+
+# what each descriptor field means, for the table in docs/ENGINE.md
+DESCRIPTOR_FIELD_NOTES = {
+    "opcode": "Operation. 0 = MATMUL, 1 = ADD, 2 = GELU, 3 = LAYERNORM, 4 = SOFTMAX; any other value is skipped.",
+    "rows_total": "M, rows of the activation operand and of the result.",
+    "inner_dim": "K, the dimension summed over. At least 1.",
+    "cols_total": "N, columns of the weight operand and of the result.",
+    "row_tiles": "ceil(M / SYS_ROW), worked out by the host.",
+    "col_tiles": "ceil(N / SYS_COL), worked out by the host.",
+    "activation_buffer_id": "Pool buffer read as the activation operand (row banks).",
+    "weight_buffer_id": "Pool buffer read as the weight operand (column banks).",
+    "output_buffer_id": "Pool buffer the result is written to.",
+    "activation_base": "Address of the activation operand's first word in each bank.",
+    "weight_base": "Address of the weight operand's first word in each bank.",
+    "output_base": "Address of the result's first word in each bank.",
+    "output_stride": "Words per stored row of the result. N for column-select and M for "
+                     "row-select, or more to place the result inside a wider tensor.",
+    "bias_base": "Address in the bias store of the bias words for output columns 0 .. SYS_COL-1.",
+    "scale": "Requantizer multiplier, signed.",
+    "shift": "Requantizer right shift, arithmetic.",
+    "drain_mode": "0 = row-select (result in column banks), 1 = column-select (result in row banks).",
+    "bias_enable": "1 = add the bias before requantizing.",
+    "last_op": "1 = stop after this op and pulse done.",
+}
+
+
+def descriptor_markdown():
+    """The descriptor_t layout as a Markdown table, most significant field first."""
+    lines = ["| Field | Bits | Width | Meaning |", "|---|---|---|---|"]
+    position = PARAMS["DESCRIPTOR_WIDTH"]
+    for name, width, signed in DESCRIPTOR_FIELDS:
+        position -= width
+        bits = f"{position + width - 1}:{position}" if width > 1 else f"{position}"
+        kind = f"{width}, signed" if signed else f"{width}"
+        lines.append(f"| `{name}` | {bits} | {kind} | {DESCRIPTOR_FIELD_NOTES[name]} |")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    print(descriptor_markdown())
+    print(f"\n{PARAMS['DESCRIPTOR_WIDTH']} bits, stored in {PARAMS['DESCRIPTOR_WORDS']} 32-bit words "
+          f"({PARAMS['DESCRIPTOR_MEMORY_WIDTH']} bits).")

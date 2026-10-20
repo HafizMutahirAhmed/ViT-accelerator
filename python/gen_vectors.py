@@ -51,8 +51,8 @@ import os
 import deterministic  # noqa: F401  (first: it sets the thread counts)
 import numpy as np
 
-from pkg_config import PARAMS, pack_descriptor
-from int8_ops import (ACC_MAX, ACC_MIN, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH,
+from int8_model import PARAMS, pack_descriptor
+from int8_model import (ACC_MAX, ACC_MIN, ACC_WIDTH, DATA_MAX, DATA_MIN, DATA_WIDTH,
                       SCALE_MAX, SCALE_MIN, SCALE_WIDTH, SHIFT_MAX, add_bias,
                       linear_acc, matmul_acc, read_hex, requantize, wrap_signed,
                       write_hex)

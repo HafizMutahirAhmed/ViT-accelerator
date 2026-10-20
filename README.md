@@ -59,19 +59,16 @@ bitstreams in `build/`.
 | File | What it is |
 |---|---|
 | `make_model.py` | **The one entry point for a model**: board and number of layers in, everything a board and the testbenches need out |
-| `golden_model.py` | The DeiT-Tiny pass in the engine's integer arithmetic, layer count as a parameter |
-| `layer_program.py` | Lays a pass out as a descriptor program on the buffer pool, in phases |
-| `int8_ops.py`, `nonlinear_ops.py` | Bit-exact integer models of the engine's arithmetic |
-| `pkg_config.py` | Reads `vit_config_pkg.sv`; packs and unpacks descriptors |
-| `cycle_model.py` | Cycle count of every op, checked against simulation logs |
-| `gen_vectors.py` | Synthetic vectors for the core testbenches |
-| `deterministic.py` | One thread and fixed seeds, so every run makes the same files |
 | `run_image.py` | Sends one digit or picture to the board (or the software model) and prints the answer |
 | `ddr_check.py` | Board bring-up: the DDR, the DMA and `RUN` |
-| `ddr_image.py` | Where everything lives in DDR, the upload, the run list |
-| `protocol.py`, `transports.py` | Host side of the byte protocol; the serial port |
-| `engine_model.py` | Software model of the board, byte for byte |
+| `golden_model.py` | The DeiT-Tiny pass in the engine's integer arithmetic, layer count as a parameter |
+| `layer_program.py` | Lays a pass out as a descriptor program on the buffer pool, in phases |
+| `int8_model.py` | The engine's arithmetic, bit for bit (integer ops, GELU, LayerNorm, softmax, the residual add); reads `vit_config_pkg.sv` and packs descriptors |
+| `host.py` | The host side of the board: the byte protocol, the serial port, where everything lives in DDR, the run list |
+| `board_model.py` | Software model of the board, byte for byte, and the cycle count of every op |
 | `preprocess.py` | A picture to the im2col matrix the engine takes |
+| `gen_vectors.py` | Synthetic vectors for the core testbenches |
+| `deterministic.py` | One thread and fixed seeds, so every run makes the same files; imported before numpy and torch |
 
 ### Testbenches
 

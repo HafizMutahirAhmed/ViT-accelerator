@@ -147,7 +147,7 @@ golden tensors.
 
 What `python/run_image.py` does on the Nexys A7 (`nexys_top_ddr`): the
 weights, biases, LayerNorm constants, the descriptor table and the run list go
-into DDR once per power-up and model, as `python/ddr_image.py` lays them out
+into DDR once per power-up and model, as `python/host.py` lays them out
 (from byte 1 MiB on, each load on a 64-byte boundary, with a 64-byte signature
 just below 1 MiB that names the image). A run reads the signature with
 `READ_DDR` and uploads the image with `WRITE_DDR` only if the DDR does not

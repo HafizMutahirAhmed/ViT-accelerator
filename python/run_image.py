@@ -39,7 +39,7 @@ Usage:
                  tb_axi_replay_step, which play them to the RTL
 
 What happens: the weights, biases, LayerNorm constants, descriptors and the run
-list go to the board's DDR once per power-up (python/ddr_image.py; skipped when
+list go to the board's DDR once per power-up (python/host.py; skipped when
 the DDR already holds them, which a 64-byte signature tells). Per image the
 image goes to DDR and one RUN makes the board load and run every phase by itself
 (docs/HOST_PROTOCOL.md). The host then reads the scores: it sums the 49 patch
@@ -61,9 +61,8 @@ import numpy as np
 HOST_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(HOST_DIR)
 sys.path.insert(0, HOST_DIR)
-import ddr_image  # noqa: E402
 import preprocess  # noqa: E402
-import protocol  # noqa: E402
+import host  # noqa: E402
 
 LANES = 8
 DEFAULT_MODEL_DIR = os.path.join(HOST_DIR, "models", "nexys_L2")
@@ -126,13 +125,13 @@ class Program:
         """(phase, first entry, count) of every descriptor write: the whole table at once (phase None) when it
         fits the descriptor memory, else each phase's entries before its START. Entry e lives in slot
         e mod DESCRIPTOR_SLOTS, so a phase that wraps past the last slot is two writes."""
-        entries = len(self.descriptor_bytes) // protocol.DESCRIPTOR_BYTES
-        if entries <= protocol.DESCRIPTOR_SLOTS:
+        entries = len(self.descriptor_bytes) // host.DESCRIPTOR_BYTES
+        if entries <= host.DESCRIPTOR_SLOTS:
             return [(None, 0, entries)]
         blocks = []
         for phase, first, count in self.phases:
             while count:
-                part = min(count, protocol.DESCRIPTOR_SLOTS - first % protocol.DESCRIPTOR_SLOTS)
+                part = min(count, host.DESCRIPTOR_SLOTS - first % host.DESCRIPTOR_SLOTS)
                 blocks.append((phase, first, part))
                 first, count = first + part, count - part
         return blocks
@@ -160,19 +159,19 @@ def tensor_of(op, data):
 
 def run(link, program, embed_in, check=None, verbose=True, clear=False, ddr=None):
     """Step by step: loads, starts and waits for every phase. check(op, tensor) is called for every stage that
-    can be read back. ddr: a ddr_image.DdrImage already in the board's DDR; its loads are then DMA_LOADs
+    can be read back. ddr: a host.DdrImage already in the board's DDR; its loads are then DMA_LOADs
     (without it every load is written over the link, which is how the software model makes the reference).
     Returns (scores of head_mean 50 x 10, scores of head_class 1 x 10, engine cycles)."""
     link.clear()
     if clear:
         for buffer_id, depth in enumerate(program.depths):
-            link.write(protocol.WRITE_BUFFER, buffer_id, 0, bytes(8 * depth))
+            link.write(host.WRITE_BUFFER, buffer_id, 0, bytes(8 * depth))
 
     def write_descriptors(phase):
         for block_phase, first, count in program.descriptor_blocks():
             if block_phase == phase:
-                link.write(protocol.WRITE_DESCRIPTOR, 0, first % protocol.DESCRIPTOR_SLOTS, program.descriptor_bytes[
-                    protocol.DESCRIPTOR_BYTES * first:protocol.DESCRIPTOR_BYTES * (first + count)])
+                link.write(host.WRITE_DESCRIPTOR, 0, first % host.DESCRIPTOR_SLOTS, program.descriptor_bytes[
+                    host.DESCRIPTOR_BYTES * first:host.DESCRIPTOR_BYTES * (first + count)])
 
     write_descriptors(None)
     cycles = 0
@@ -187,10 +186,10 @@ def run(link, program, embed_in, check=None, verbose=True, clear=False, ddr=None
                 continue
             data = row_bank_bytes(embed_in) if file_name == "embed_in_image.hex" else program.load_bytes(
                 kind, file_name)
-            code = {"buffer": protocol.WRITE_BUFFER, "bias": protocol.WRITE_BIAS,
-                    "layernorm": protocol.WRITE_LAYERNORM}[kind]
+            code = {"buffer": host.WRITE_BUFFER, "bias": host.WRITE_BIAS,
+                    "layernorm": host.WRITE_LAYERNORM}[kind]
             link.write(code, target, base, data)
-        link.start(first % protocol.DESCRIPTOR_SLOTS)
+        link.start(first % host.DESCRIPTOR_SLOTS)
         cycles += link.wait_idle()
         for op in program.ops[first:first + count]:
             wanted = op["name"] in ("head_mean", "head_class")
@@ -210,7 +209,7 @@ def run_with_list(link, program, embed_in, ddr, check=None, clear=False):
     link.clear()
     if clear:
         for buffer_id, depth in enumerate(program.depths):
-            link.write(protocol.WRITE_BUFFER, buffer_id, 0, bytes(8 * depth))
+            link.write(host.WRITE_BUFFER, buffer_id, 0, bytes(8 * depth))
     cycles = ddr.run(link, row_bank_bytes(embed_in))
     _phase, first, count = program.phases[-1]
     outputs = {}
@@ -226,8 +225,8 @@ def run_with_list(link, program, embed_in, ddr, check=None, clear=False):
 
 def model_link(program, memory=True):
     """A HostLink to the software model of the board."""
-    import engine_model
-    return protocol.HostLink(engine_model.ModelDevice(program.depths, os.path.join(
+    import board_model
+    return host.HostLink(board_model.ModelDevice(program.depths, os.path.join(
         REPO_DIR, program.config["rom_dir"]), memory=memory))
 
 
@@ -237,26 +236,25 @@ def ping(args):
         link = model_link(Program(args.model_dir))
         where = "the software model"
     else:
-        import transports
         where = f"{args.port} at {args.baud} baud"
         try:
-            link = protocol.HostLink(transports.SerialTransport(args.port, args.baud, timeout=2.0))
+            link = host.HostLink(host.SerialTransport(args.port, args.baud, timeout=2.0))
         except Exception as error:   # the port does not exist, is busy, or needs the dialout group
             print(f"PING FAIL: cannot open {args.port}: {error}")
             return 1
     try:
         flags, cycles = link.status()
-    except protocol.ProtocolError as error:
+    except host.ProtocolError as error:
         print(f"PING FAIL: no valid answer from {where}: {error}")
         return 1
-    busy, done, error_flag = (bool(flags & bit) for bit in (protocol.FLAG_BUSY, protocol.FLAG_DONE,
-                                                             protocol.FLAG_ERROR))
+    busy, done, error_flag = (bool(flags & bit) for bit in (host.FLAG_BUSY, host.FLAG_DONE,
+                                                             host.FLAG_ERROR))
     print(f"PING OK: {where} answered")
     print(f"  busy  {int(busy)}   the engine is {'running' if busy else 'idle'}")
     print(f"  done  {int(done)}   {'a run has finished since the last START or CLEAR' if done else 'no finished run'}")
     print(f"  error {int(error_flag)}   {'a command was refused or had a wrong checksum; CLEAR resets this' if error_flag else 'no protocol error'}")
-    print(f"  ddr   {int(bool(flags & protocol.FLAG_MEMORY))}   "
-          f"{'external memory calibrated' if flags & protocol.FLAG_MEMORY else 'DDR not calibrated: press CPU_RESET; is the bitstream nexys_top_ddr?'}")
+    print(f"  ddr   {int(bool(flags & host.FLAG_MEMORY))}   "
+          f"{'external memory calibrated' if flags & host.FLAG_MEMORY else 'DDR not calibrated: press CPU_RESET; is the bitstream nexys_top_ddr?'}")
     print(f"  busy cycles of the last run: {cycles}")
     return 1 if error_flag else 0
 
@@ -310,8 +308,7 @@ def main():
     if args.model:
         link = model_link(program)
     else:
-        import transports
-        link = protocol.HostLink(transports.SerialTransport(args.port, args.baud))
+        link = host.HostLink(host.SerialTransport(args.port, args.baud))
 
     failures = []
     expected = {}
@@ -338,11 +335,11 @@ def main():
         link.record = []
     link.clear()
     flags, _cycles = link.status()
-    if not flags & protocol.FLAG_MEMORY:
+    if not flags & host.FLAG_MEMORY:
         print("DDR FAIL: the board reports no calibrated external memory (LED 4 off). Is the bitstream "
               "nexys_top_ddr? Press CPU_RESET and try again.")
         return 1
-    ddr = ddr_image.DdrImage(program)
+    ddr = host.DdrImage(program)
     upload_started = time.time()
     if ddr.upload(link, reload=args.reload):
         print(f"DDR: uploaded {len(ddr.image)} bytes of weights in {time.time() - upload_started:.1f} s "
@@ -374,7 +371,7 @@ def main():
             for packet, response in link.record:
                 tx.write("".join(f"{byte:02x}\n" for byte in packet))
                 rx.write("".join(f"{byte:02x}\n" for byte in response))
-                packets.write(f"{len(packet)} {len(response)} {int(packet[1] == protocol.START)}\n")
+                packets.write(f"{len(packet)} {len(response)} {int(packet[1] == host.START)}\n")
         with open(prefix + "summary.txt", "w") as summary:
             totals = (0,) * 7 if args.step else ddr.run_totals()
             summary.write(" ".join(str(value) for value in totals) + "\n")

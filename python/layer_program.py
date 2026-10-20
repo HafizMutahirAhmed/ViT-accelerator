@@ -62,8 +62,8 @@ import os
 
 import numpy as np
 
-from int8_ops import DATA_WIDTH, write_hex
-from pkg_config import PARAMS, pack_descriptor
+from int8_model import DATA_WIDTH, write_hex
+from int8_model import PARAMS, pack_descriptor
 
 LANES = 8
 ROW_SELECT, COLUMN_SELECT = PARAMS["DRAIN_ROW_SELECT"], PARAMS["DRAIN_COLUMN_SELECT"]
