@@ -50,6 +50,19 @@ accuracy on 2,000 test digits. The bitstream holds the tables of all 12 layers,
 so **the same bitstream runs every layer count**; `run_image.py --model-dir`
 picks the model.
 
+**Any number from 1 to 12 works**, on the same bitstream. What differs is only
+how long `make_model.py` takes the first time:
+
+| Layers | Classifier in `python/calibration/` | `make_model.py` takes | Tested |
+|---|---|---|---|
+| 2, 6, 12 | yes, in the repo | seconds | in simulation (`RUN` through the RTL) and the software model |
+| 1, 3, 4, 5, 7, 8, 9, 10, 11 | made the first time | 15 to 60 minutes once, seconds after | the same mechanism as 2, 6 and 12 |
+
+Then run it with `--model-dir python/models/nexys_L<N>`, for example
+`nexys_L8`. A model of up to 9 layers (at most 256 descriptors) loads its
+descriptors once; 10 to 12 layers load them phase by phase, as the 12-layer
+model does.
+
 ## Build
 
 In the GUI: **Tools > Run Tcl Script...** with `scripts/create_nexys_ddr_project.tcl`
