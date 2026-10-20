@@ -100,6 +100,25 @@ python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --step --check   # eve
    printed); `--png` takes any picture of one digit and prepares it the way
    MNIST digits were made (`--save-input` shows the result).
 
+## Running again without uploading the weights
+
+Use the same command, without `--reload` (and without `--check`, which is
+slower):
+
+```sh
+python3 python/run_image.py --port /dev/ttyUSB1 --digit 500 --model-dir python/models/nexys_L6
+```
+
+Before each run the script reads a 64-byte signature from DDR. When the DDR
+already holds that model's weights it prints `DDR: the weights are already in
+DDR ..., not uploaded again`, sends only the image and gives the answer in
+about a second. It uploads the weights again only when it has to:
+
+- `--reload` is given;
+- the board was powered off or programmed again (the DDR is empty then);
+- another model ran in between: the DDR holds one model at a time, so going
+  from `nexys_L6` to `nexys_L12` and back uploads the 6-layer weights again.
+
 The FT2232 on the board gives two serial ports (`/dev/ttyUSB0` and
 `/dev/ttyUSB1` on Linux, two COM ports on Windows); one is JTAG, one is the
 UART. If `--ping` gets no answer on one, try the other.
