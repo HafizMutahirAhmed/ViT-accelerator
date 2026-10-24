@@ -78,6 +78,91 @@ P·V; projection; add; LN2; fc1; GELU; fc2; add. Details are in
 | Requantizer | 8-bit multiplier and 5-bit right shift per op, chosen by Python |
 | Scales | Largest magnitude seen on 128 calibration images ÷ 127, stored in `python/calibration/<board>_scales.json` |
 
+### The software flow
+
+**Once per model, on the PC: `make_model.py --board nexys --layers N`** (needs torch)
+
+1. Loads the pretrained DeiT-Tiny from `timm` at the board's image size. For
+   112 x 112 the position embedding is resampled to 50 tokens.
+2. Reads the scale of every tensor from `python/calibration/<board>_scales.json`.
+   With `--recalibrate` it recomputes them: 128 images go through the FP32
+   model, and each scale is the largest magnitude ÷ 127.
+3. Loads the classifier (`<board>_L<N>_probe.npz`), or trains one the first
+   time on the integer model's features of 6,000 training digits.
+4. **`golden_model.py`** quantizes the weights to INT8 and runs the test image
+   through the integer model. Every op uses the arithmetic of `int8_model.py`,
+   the bit-exact model of the hardware. It records every stage, and for every
+   matmul the requantizer's scale and shift.
+5. **`layer_program.py`** places every tensor in one of the 8 buffers, turns
+   each op into a descriptor and splits the program into phases (each phase
+   has its weights loaded before it runs).
+6. Writes `python/models/<board>_L<N>/`: the descriptor program, the loads of
+   every phase, the golden tensors of every stage and `host_config.json`. It
+   also writes the GELU, exp and 1/√x tables to `rtl/rom/<board>/`. If those
+   tables changed, the bitstream has to be rebuilt.
+
+**Per image, on the PC: `run_image.py`** (no torch needed)
+
+1. `preprocess.py`: the 28 x 28 digit is resized to 112 x 112, normalised,
+   cut into 16 x 16 patches (im2col) and quantized with the input scale.
+2. `host.py` lays out the weights, descriptors and run list as one DDR image.
+   It reads a 64-byte signature from DDR and uploads everything
+   (`WRITE_DDR`) only if the board doesn't already hold this model.
+3. The image goes to DDR, followed by one `RUN` command. The bridge then works
+   through the run list on its own: `LOAD` entries (a DMA copies a phase's
+   weights into the engine) and `START` entries (run a phase's descriptors).
+4. The host reads the classifier output back, sums the 49 patch rows and takes
+   the largest of the 10 scores as the digit. With `--check` it also compares
+   the board's tensors with `board_model.py` given the same image. With
+   `--step` the host runs the phases one at a time, so every stage can be
+   read back.
+
+**For the tests: `scripts/gen_vectors.sh`** runs `gen_vectors.py` (synthetic
+vectors for the block-level tests) and `make_model.py` for the configurations
+the testbenches use. It then runs `run_image.py --model --record`, which saves
+every byte the host would send and receive, so `tb_axi_replay_*` can replay
+them to the RTL.
+
+### The hardware modules
+
+```
+nexys_top_ddr                       boards/nexys_a7: board top level
+├── system_clock_generator          Clocking Wizard IP: 100 MHz system clock, 200 MHz for the MIG
+├── uart_rx, uart_tx                the byte transport to the PC
+├── memory_system_wrapper           block design: MIG (DDR2), AXI DMA, SmartConnect
+└── accelerator_system              rtl/interface: board-independent accelerator
+    ├── axi_host_bridge             host protocol, WRITE_DDR / DMA_LOAD / RUN
+    ├── (stream multiplexer)        bridge or DMA into the engine's stream input
+    └── vit_axi_wrapper → vit_axi_core    AXI4-Lite registers + AXI4-Stream around the engine
+        └── matmul_engine           rtl/core: the engine
+            ├── descriptor memory, sequencer, bias store
+            ├── operand_buffer x 8  the buffer pool
+            ├── matmul_stream_controller → systolic_array (skew, 8 x 8 pe)
+            ├── drain → requantize  bias add and INT32 → INT8
+            └── row_op_reader → residual_add | gelu_lut | layernorm | softmax → row_op_writer
+```
+
+| Module | File | What it does |
+|---|---|---|
+| `vit_config_pkg` | `rtl/core/vit_config_pkg.sv` | Every parameter, the opcodes and the descriptor format |
+| `matmul_engine` | `rtl/core/matmul_engine.sv` | Top of the engine: descriptor memory, sequencer, buffer pool, bias store; runs one op after the other |
+| `operand_buffer` | `rtl/core/operand_buffer.sv` | One pool buffer: 8 block-RAM banks, one per array lane |
+| `matmul_stream_controller` | `rtl/core/matmul_stream_controller.sv` | Walks a matmul tile by tile and streams both operands into the array |
+| `systolic_array`, `pe`, `skew` | `rtl/core/` | 8 x 8 output-stationary array; each `pe` is one DSP multiply-accumulate; `skew` delays lane i by i cycles |
+| `drain`, `requantize` | `rtl/core/` | Read a finished tile out, add the bias, requantize to INT8, write to the output buffer |
+| `row_op_reader`, `row_op_writer` | `rtl/core/` | Stream a tensor row by row through a non-linear unit and write the result back |
+| `residual_add` | `rtl/core/residual_add.sv` | Adds two INT8 tensors with different scales |
+| `gelu_lut` | `rtl/core/gelu_lut.sv` | GELU as a 256-entry table per layer |
+| `layernorm` | `rtl/core/layernorm.sv` | Mean and variance over a row, 1/√x by table, gain and offset |
+| `softmax` | `rtl/core/softmax.sv` | Row maximum, exp by table, sum, one division per row; output 0..127 |
+| `vit_axi_core`, `vit_axi_wrapper` | `rtl/interface/` | The engine as an AXI block (register map in [docs/AXI_REGISTER_MAP.md](docs/AXI_REGISTER_MAP.md)); the wrapper is plain Verilog so Vivado block designs can use it |
+| `axi_host_bridge` | `rtl/interface/axi_host_bridge.sv` | Turns host packets into AXI transactions; DDR writes, DMA loads and the `RUN` sequencer |
+| `accelerator_system` | `rtl/interface/accelerator_system.sv` | Bridge + wrapper + stream multiplexer: what a board instantiates |
+| `nexys_top_ddr`, `uart_rx`, `uart_tx` | `boards/nexys_a7/` | Nexys A7 top level: clocks, reset, UART, DDR2 block design, LEDs |
+
+Every module's header comment describes its ports, timing and fixed-point
+formats in full.
+
 ---
 
 ## 2. Running it
@@ -113,6 +198,15 @@ deterministic: two runs produce byte-identical files.
 vivado -mode batch -source scripts/create_nexys_ddr_project.tcl    # project in build/
 vivado -mode batch -source scripts/build_nexys_ddr.tcl             # build/nexys_top_ddr.bit; WNS, WHS must be >= 0
 ```
+
+The first script creates the Vivado project in `build/nexys_a7_ddr_project/`.
+It adds the sources from `rtl/` and `boards/nexys_a7/`, generates the
+Clocking Wizard, and builds the block design `memory_system` (MIG with
+`boards/nexys_a7/mig_ddr2.prj`, AXI DMA, SmartConnect) with
+`scripts/create_memory_system_bd.tcl`. The second runs synthesis and
+implementation, writes the reports to `build/nexys_a7_ddr_reports/` and
+copies the bitstream to `build/nexys_top_ddr.bit`. In the GUI you can instead use **Tools > Run Tcl Script** with the first
+script, then **Generate Bitstream**.
 
 Program the board in the Hardware Manager. LD4 lights up once the DDR2 has
 calibrated. Then:
@@ -192,6 +286,50 @@ dimension up to 768, up to 1000 output columns, 256 descriptors (longer
 programs load in parts automatically), tables for 12 GELUs and 36 softmax
 heads. A larger model, such as DeiT-Small with 384 width and an MLP of 1536,
 needs these limits raised and more block RAM.
+
+### Making an RTL change, step by step
+
+The Python model and the RTL must always compute the same bits. A change to
+the arithmetic is therefore made in both.
+
+1. **Edit the SystemVerilog.** New parameters go in `vit_config_pkg.sv`, and
+   the module header should state the fixed-point formats.
+2. **If the arithmetic or the descriptor format changed, update the Python
+   model:** the op in `int8_model.py` and, if needed, how `golden_model.py`
+   uses it. `int8_model.py` reads the parameters from `vit_config_pkg.sv`
+   itself.
+3. **Regenerate the vectors:** `scripts/gen_vectors.sh`.
+4. **Run the module's testbench:** `scripts/sim.sh <module>` (for example
+   `scripts/sim.sh layernorm`). It prints PASS, or FAIL with the first
+   mismatching index; the log is in `sim/sim_<module>.log`. Debug with
+   `$display` in the testbench output.
+5. **Run the whole regression:** `scripts/regress.sh` (about an hour). Every
+   line must say PASS.
+6. **Check on the board:** rebuild the bitstream, check WNS and WHS ≥ 0 in the
+   build output, and run `run_image.py --digit 0 --step --check`, which
+   compares every stage the board computes with the model.
+
+For a **new module**: put it in `rtl/core/` or `rtl/interface/`, where
+`sim.sh` compiles every file automatically. Write `tb/tb_<module>.sv`, which
+reads golden vectors from `python/` and prints PASS or FAIL with the first
+mismatch, and add a line to the `runs` list in `scripts/regress.sh`. The Vivado
+project also picks up every file in `rtl/core/` and `rtl/interface/`; only
+new files under `boards/` have to be added to the list in
+`scripts/create_nexys_ddr_project.tcl`.
+
+### Porting to another board (for example the Opal Kelly XEM7310)
+
+`accelerator_system` is board-independent. A board provides only a byte
+transport, clocks and reset, and DDR with an AXI DMA. Building the XEM7310
+version means writing a top level with a FrontPanel USB adapter instead of the
+UART, the XEM7310's DDR3 MIG settings, its constraints and build scripts, and a
+FrontPanel transport class in `host.py`. The engine, the bridge and the rest of
+the host software stay unchanged. That board's larger chip (XC7A200T) is what
+makes the full 224 x 224 input fit.
+
+The step-by-step guide, including what is already tested, the buffer depths to
+use, and what to watch, is in
+**[boards/opal_kelly/README.md](boards/opal_kelly/README.md)**.
 
 **Rules that keep it correct:**
 
