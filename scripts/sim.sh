@@ -11,12 +11,8 @@
 # path relative to tb/.
 #
 # Every run works in its own directory, sim/<snapshot>/, so several runs can
-# go in parallel. Testbenches name their vectors from there
-# ("../../python/vectors/..."). ROM images are named the way synthesis finds
-# them, relative to rtl/core: the engine's defaults as "rom/...", which is
-# rtl/core/rom, a link to rtl/rom/input_224, and another configuration's as
-# "../rom/<configuration>/...". sim/<snapshot>/rom and sim/rom are links that
-# make the same names work here.
+# go in parallel. Testbenches name their vectors and ROM images from there,
+# through VIT_ROOT ("../../", tb/vit_paths.svh).
 #
 # The output is also saved to sim/<snapshot>.log. The exit code is non-zero
 # when a tool fails or the log contains FAIL, a $fatal ("Fatal:") or ERROR.
@@ -37,11 +33,11 @@ for f in "$root"/rtl/core/*.sv "$root"/rtl/interface/*.sv "$root"/rtl/interface/
     [ "$f" = "$pkg" ] || rtl+=("$f")
 done
 
-# a testbench that wraps another one names it in a line "// sim.sh: also compile <file>"
+# a testbench that wraps another one names it in a line "// also compile: <file>"
 extra=()
 while read -r also; do
     extra+=("$root/tb/$also")
-done < <(sed -n 's|^// sim.sh: also compile ||p' "$root/tb/tb_$mod.sv")
+done < <(sed -n 's|^// also compile: ||p' "$root/tb/tb_$mod.sv")
 
 snapshot=sim_$mod
 generics=()
@@ -51,14 +47,12 @@ for g in "$@"; do
 done
 
 mkdir -p "$root/sim/$snapshot"
-ln -sfn ../../rtl/rom/input_224 "$root/sim/$snapshot/rom"
-ln -sfn ../rtl/rom "$root/sim/rom"
 cd "$root/sim/$snapshot"
 
 log=../$snapshot.log
 status=0
 {
-    xvlog -sv "$pkg" "${rtl[@]}" ${extra[@]+"${extra[@]}"} "$root/tb/tb_$mod.sv" &&
+    xvlog -sv -i "$root/tb" "$pkg" "${rtl[@]}" ${extra[@]+"${extra[@]}"} "$root/tb/tb_$mod.sv" &&
     xelab "tb_$mod" -s "$snapshot" ${generics[@]+"${generics[@]}"} &&
     xsim "$snapshot" -runall
 } 2>&1 | tee "$log" || status=$?

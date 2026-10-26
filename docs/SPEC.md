@@ -137,7 +137,7 @@ host ── UART ── axi_host_bridge ── m_axi (12-bit) ──────
   for the DMA registers and the DDR. The wrapper keeps its own 12-bit port, so
   its register path is the one the bridge always used, unchanged. (The plan had
   one master through SmartConnect for both; two ports keep the tested path.)
-- **Block design** `memory_system`, from `scripts/create_memory_system_bd.tcl`;
+- **Block design** `memory_system`, in `vivado/vit.srcs/sources_1/bd/memory_system/`;
   the MIG configuration is `boards/nexys_a7/mig_ddr2.prj`, Digilent's with the
   system clock taken from the clocking wizard.
 
@@ -237,7 +237,7 @@ and `python/run_image.py` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
   and 12 layers (12: descriptors loaded per phase).
 - `tb_nexys_top_ddr`: the board top through its pins, with models of the
   clocking wizard and the block design.
-- `tb_dma_ip` (`scripts/sim_dma_ip.sh`): `accelerator_system` against Xilinx's
+- `tb_dma_ip` (simulation set `dma_ip`): `accelerator_system` against Xilinx's
   simulation model of the AXI DMA, configured as in the block design.
 - The MIG and SmartConnect are not simulated; `python/ddr_check.py` checks
   them on the board.
@@ -248,7 +248,7 @@ and `python/run_image.py` ([NEXYS_QUICKSTART.md](NEXYS_QUICKSTART.md)).
 ## Verification
 
 Every module has a self-checking testbench against golden vectors that
-`scripts/gen_vectors.sh` generates. The whole forward pass runs as one
+`python/make_test_vectors.py` generates. The whole forward pass runs as one
 descriptor program and every stage is compared with the golden model, for both
 boards; the host software's byte stream is replayed against the RTL.
 

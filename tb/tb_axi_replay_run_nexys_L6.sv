@@ -6,15 +6,17 @@
 // --model-dir python/models/nexys_L6, made after
 // python/make_model.py --board nexys --layers 6.
 //
-// sim.sh: also compile tb_axi_replay_run.sv
-// sim.sh: also compile axi_rule_checker.sv
-// sim.sh: also compile memory_system_model.sv
+// also compile: tb_axi_replay_run.sv
+// also compile: axi_rule_checker.sv
+// also compile: memory_system_model.sv
 //////////////////////////////////////////////////////////////////////////////////
+
+`include "vit_paths.svh"
 
 module tb_axi_replay_run_nexys_L6;
 
     tb_axi_replay_run #(
-        .VECTOR_DIR ("../../python/models/nexys_L6/")
+        .VECTOR_DIR ({`VIT_ROOT, "python/models/nexys_L6/"})
     ) replay ();
 
 endmodule

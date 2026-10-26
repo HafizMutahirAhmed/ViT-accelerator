@@ -15,8 +15,10 @@
 //   requant_out.hex    INT8
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_requantize #(
-    parameter string VECTOR_DIR = "../../python/vectors/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/vectors/"}
 );
 
     localparam int DATA_WIDTH  = vit_config_pkg::DATA_WIDTH;

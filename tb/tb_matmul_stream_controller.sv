@@ -19,10 +19,12 @@
 // sees stale words from the first one in the banks.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_matmul_stream_controller #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../../python/vectors/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/vectors/"}
 );
 
     localparam int DATA_WIDTH = vit_config_pkg::DATA_WIDTH;

@@ -21,10 +21,12 @@
 // The array size must be the one the descriptors were made for (8x8).
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_matmul_engine_nonlinear #(
     parameter int    SYS_ROW    = vit_config_pkg::SYS_ROW,
     parameter int    SYS_COL    = vit_config_pkg::SYS_COL,
-    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/opal_kelly_L2/"}
 );
 
     import vit_config_pkg::descriptor_t;
@@ -72,9 +74,12 @@ module tb_matmul_engine_nonlinear #(
     logic signed [vit_config_pkg::LAYERNORM_OFFSET_WIDTH-1:0] host_layernorm_write_offset = '0;
 
     matmul_engine #(
-        .SYS_ROW      (SYS_ROW),
-        .SYS_COL      (SYS_COL),
-        .BUFFER_DEPTH ({BUFFER_COUNT{32'(BUFFER_DEPTH)}})
+        .SYS_ROW        (SYS_ROW),
+        .SYS_COL        (SYS_COL),
+        .BUFFER_DEPTH   ({BUFFER_COUNT{32'(BUFFER_DEPTH)}}),
+        .GELU_ROM_FILE  (`VIT_ROM_224("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_224("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_224("rsqrt_rom.hex"))
     ) dut (
         .CLK                          (CLK),
         .reset                        (reset),

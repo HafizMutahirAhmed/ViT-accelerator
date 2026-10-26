@@ -15,6 +15,11 @@ This page is the one document to read. It explains how the design works, how to
 run it, how to change it, and what its limits are. The files under `docs/` hold
 the full details and are linked where they matter.
 
+Everything on the hardware side is done in the **Vivado GUI** with one project,
+`vivado/vit.xpr`: the design, the constraints, the IPs and every testbench as a
+simulation set. The software side (making a model, running a digit on the
+board) is Python in a terminal. Step by step: [docs/VIVADO_GUI.md](docs/VIVADO_GUI.md).
+
 ---
 
 ## 1. How it works
@@ -117,11 +122,11 @@ P·V; projection; add; LN2; fc1; GELU; fc2; add. Details are in
    `--step` the host runs the phases one at a time, so every stage can be
    read back.
 
-**For the tests: `scripts/gen_vectors.sh`** runs `gen_vectors.py` (synthetic
-vectors for the block-level tests) and `make_model.py` for the configurations
-the testbenches use. It then runs `run_image.py --model --record`, which saves
-every byte the host would send and receive, so `tb_axi_replay_*` can replay
-them to the RTL.
+**For the tests: `python/make_test_vectors.py`** runs `gen_vectors.py`
+(synthetic vectors for the block-level tests) and `make_model.py` for the
+configurations the testbenches use. It then runs `run_image.py --model
+--record`, which saves every byte the host would send and receive, so
+`tb_axi_replay_*` can replay them to the RTL.
 
 ### The hardware modules
 
@@ -169,60 +174,52 @@ formats in full.
 
 ### What you need
 
-- Ubuntu with **Vivado 2022.2** (xsim for simulation, the toolchain for the
-  bitstream). Run `source <Vivado>/settings64.sh` first.
-- Python 3 with `numpy`, `Pillow` and `pyserial`. For making models you also
-  need a virtual environment with torch:
+- **Vivado 2022.2** (Linux or Windows): the simulator and the toolchain.
+- Python 3 with `numpy`, `Pillow` and `pyserial` (on Ubuntu:
+  `sudo apt install python3-numpy python3-pil python3-serial`). Only for making
+  new models or vectors you also need torch, in a virtual environment:
 
 ```sh
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install torch torchvision timm
 ```
 
-### Without a board: simulation and the software model
+### In Vivado: the testbenches and the bitstream
+
+Open `vivado/vit.xpr` in Vivado (**Open Project**).
+
+- **A testbench:** in the Sources window under **Simulation Sources**,
+  right-click a simulation set (for example `encoder_program_nexys`, the whole
+  112 x 112 forward pass) > **Make Active**, then **Run Simulation > Run
+  Behavioral Simulation**. It runs to the end and prints `PASS` or `FAIL` (with
+  the first mismatch) in the Tcl Console. Every module has its set; the list is
+  in [docs/VIVADO_GUI.md](docs/VIVADO_GUI.md).
+- **The bitstream:** **Generate Bitstream**, then **Open Implemented Design >
+  Report Timing Summary**: WNS and WHS must be 0 or more.
+- **The board:** **Open Hardware Manager > Open Target > Auto Connect > Program
+  Device**. LD4 lights up once the DDR2 has calibrated.
+
+The testbenches read their vectors from `python/vectors/` and
+`python/models/`; `.venv/bin/python python/make_test_vectors.py` makes them
+again (the same bytes every time).
+
+### In a terminal: the software
 
 ```sh
-.venv/bin/python python/make_model.py --board nexys --layers 2      # makes python/models/nexys_L2/
-python3 python/run_image.py --model --digit 0                       # the software model of the board
-scripts/gen_vectors.sh                                              # all test vectors
-scripts/sim.sh encoder_program_nexys                                # one testbench: PASS or FAIL
-scripts/regress.sh                                                  # every testbench, about an hour
-```
-
-The first run downloads the DeiT-Tiny weights and MNIST. Every run is
-deterministic: two runs produce byte-identical files.
-
-### On the Nexys A7
-
-```sh
-vivado -mode batch -source scripts/create_nexys_ddr_project.tcl    # project in build/
-vivado -mode batch -source scripts/build_nexys_ddr.tcl             # build/nexys_top_ddr.bit; WNS, WHS must be >= 0
-```
-
-The first script creates the Vivado project in `build/nexys_a7_ddr_project/`.
-It adds the sources from `rtl/` and `boards/nexys_a7/`, generates the
-Clocking Wizard, and builds the block design `memory_system` (MIG with
-`boards/nexys_a7/mig_ddr2.prj`, AXI DMA, SmartConnect) with
-`scripts/create_memory_system_bd.tcl`. The second runs synthesis and
-implementation, writes the reports to `build/nexys_a7_ddr_reports/` and
-copies the bitstream to `build/nexys_top_ddr.bit`. In the GUI you can instead use **Tools > Run Tcl Script** with the first
-script, then **Generate Bitstream**.
-
-Program the board in the Hardware Manager. LD4 lights up once the DDR2 has
-calibrated. Then:
-
-```sh
+python3 python/run_image.py --model --digit 0                      # the software model of the board, no board needed
 python3 python/run_image.py --port /dev/ttyUSB1 --ping             # "ddr 1"
 python3 python/ddr_check.py --port /dev/ttyUSB1                    # DDR, DMA and RUN bring-up, PASS/FAIL
 python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --check  # 2 layers; compares every result with the model
 python3 python/run_image.py --port /dev/ttyUSB1 --digit 0 --model-dir python/models/nexys_L6
+.venv/bin/python python/make_model.py --board nexys --layers 8     # another layer count (1 to 12)
 ```
 
 The weights are uploaded on the first run of a model (about 12 s for 2 layers,
 over a minute for 12). After that each image takes about a second over the
 UART; the engine itself needs about 10 ms for 2 layers and 60 ms for 12.
 **Changing the number of layers needs no new bitstream**, only another
-`make_model.py --layers N`. Pins, LEDs and troubleshooting are in
+`make_model.py --layers N`. Every run is deterministic: two runs produce
+byte-identical files. Pins, LEDs and troubleshooting are in
 [docs/NEXYS_QUICKSTART.md](docs/NEXYS_QUICKSTART.md).
 
 ---
@@ -236,13 +233,16 @@ UART; the engine itself needs about 10 ms for 2 layers and 60 ms for 12.
 | `rtl/rom/input_112/`, `rtl/rom/input_224/` | GELU, exp and 1/√x tables for all 12 layers, loaded with `$readmemh`, one folder per input size: 112 x 112 (the Nexys) and 224 x 224 (the Opal Kelly). The calibrated scales differ with the input size, and the GELU and exp tables are built from them (the 1/√x table is the same in both). Generated by `make_model.py` and committed, because synthesis needs them. |
 | `boards/nexys_a7/` | Top level `nexys_top_ddr.sv`, UART, MIG (DDR2) configuration and constraints. |
 | `boards/opal_kelly/` | The 224 x 224 configuration for an XEM7310. Simulated only, not built. |
-| `tb/` | One self-checking testbench per module, `tb_<name>.sv`. Each prints PASS or FAIL with the first mismatch. |
+| `tb/` | One self-checking testbench per module, `tb_<name>.sv`. Each prints PASS or FAIL with the first mismatch. `vit_paths.svh` says where they find the vectors. |
+| `vivado/` | The Vivado project `vit.xpr`: the Nexys A7 build and one simulation set per testbench. It refers to the files above; the IPs and the block design are in `vivado/vit.srcs/`. |
 | `python/` | Golden model, model generator, host software (table below). |
 | `python/calibration/` | Committed: the tensor scales and the MNIST classifiers. |
-| `scripts/` | `sim.sh`, `regress.sh`, `gen_vectors.sh`, Vivado Tcl scripts. |
-| `docs/` | Reference: SPEC, ENGINE, HOST_PROTOCOL, AXI_REGISTER_MAP, NEXYS_QUICKSTART. |
+| `docs/` | VIVADO_GUI (start here), and the reference: SPEC, ENGINE, HOST_PROTOCOL, AXI_REGISTER_MAP, NEXYS_QUICKSTART. |
 
-Generated, not tracked: `python/models/`, `python/vectors/`, `sim/`, `build/`.
+`python/models/` and `python/vectors/` are made by Python (`make_model.py`,
+`make_test_vectors.py`); they are not in git but are part of the package.
+Vivado's own output (`vivado/vit.runs`, `vit.sim`, `vit.gen`, `vit.cache`) is
+made again by Vivado.
 
 | Python file | Role |
 |---|---|
@@ -252,6 +252,9 @@ Generated, not tracked: `python/models/`, `python/vectors/`, `sim/`, `build/`.
 | `layer_program.py` | Places the pass on the 8 buffers and splits it into phases. |
 | `host.py` | Byte protocol, serial port, DDR layout, run list. |
 | `run_image.py`, `ddr_check.py` | Command-line tools for the board. |
+| `make_test_vectors.py` | Makes every vector the testbenches read. |
+| `gen_vectors.py` | The synthetic vectors of the block-level tests (called by `make_test_vectors.py`). |
+| `deterministic.py` | Makes every run produce the same bytes. |
 | `board_model.py` | Software model of the whole board, byte for byte, with cycle counts. |
 | `preprocess.py` | Image → normalised tensor → im2col matrix. |
 
@@ -266,19 +269,19 @@ There are two kinds of change:
   bitstream.
 - **Hardware changes:** edit the SystemVerilog, update the matching Python
   model (`int8_model.py` / `golden_model.py`) so the two stay bit-exact, then
-  regenerate the vectors and run the regression.
+  regenerate the vectors and run every simulation set.
 
 | I want to change… | Edit | Then |
 |---|---|---|
 | **Number of layers** (1–12) | nothing; `make_model.py --layers N` | Run with `--model-dir python/models/nexys_L<N>`. Same bitstream. |
 | **The task** (other classes, other data) | `Data` and `train_probe()` in `make_model.py`: the dataset, the classifier and the calibration images | `make_model.py --recalibrate --retrain`, rebuild the bitstream (the tables follow the scales) |
-| **Quantization** (calibration method, SmoothQuant, percentile) | `calibrate()` in `make_model.py`; where scales are applied: `Model` and `Forward` in `golden_model.py` | `--recalibrate`, `gen_vectors.sh`, `regress.sh`, rebuild |
+| **Quantization** (calibration method, SmoothQuant, percentile) | `calibrate()` in `make_model.py`; where scales are applied: `Model` and `Forward` in `golden_model.py` | `--recalibrate`, `make_test_vectors.py`, every simulation set, rebuild |
 | **Image size / token count** | `BOARDS` in `make_model.py` (size, tokens, buffer depths) and the `BUFFER_DEPTH_*` parameters in the board top | `make_model.py` checks that it fits; rebuild. At most 197 tokens (`ROWS_TOTAL_MAX`). |
 | **Another ViT from timm** | `MODEL_NAME` in `golden_model.py` | Works without hardware changes if it fits the limits below. Otherwise raise the limits in `vit_config_pkg.sv`. |
-| **Array size** (e.g. 16 x 16) | `SYS_ROW`, `SYS_COL` in `vit_config_pkg.sv` and `golden_model.py`; must be square | Regression; check timing and DSP count |
-| **Precision of GELU, LayerNorm or softmax** | Table sizes and widths in `vit_config_pkg.sv`, the unit in `rtl/core`, and `LAYERNORM` / `SOFTMAX` in `golden_model.py` with the matching code in `int8_model.py` | Vectors, regression, rebuild |
+| **Array size** (e.g. 16 x 16) | `SYS_ROW`, `SYS_COL` in `vit_config_pkg.sv` and `golden_model.py`; must be square | Every simulation set; check timing and DSP count |
+| **Precision of GELU, LayerNorm or softmax** | Table sizes and widths in `vit_config_pkg.sv`, the unit in `rtl/core`, and `LAYERNORM` / `SOFTMAX` in `golden_model.py` with the matching code in `int8_model.py` | Vectors, every simulation set, rebuild |
 | **Host commands** | `axi_host_bridge.sv`, `host.py`, `board_model.py`, [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md) | `tb_axi_replay_*`, `tb_nexys_top_ddr` |
-| **Clock or baud rate** | Parameters of `nexys_top_ddr.sv`, the clocking wizard in `scripts/create_nexys_ddr_project.tcl`, `--baud` on the host | Rebuild |
+| **Clock or baud rate** | Parameters of `nexys_top_ddr.sv`, the Clocking Wizard `system_clock_generator` in the project (double-click it in the Sources window), `--baud` on the host | Rebuild |
 | **Another board** | A new `boards/<board>/` top that instantiates `accelerator_system` with a byte transport (UART, USB, PCIe…), DDR and clocks; a `BOARDS` entry | `tb_nexys_top_ddr` is the template |
 
 **Engine limits** (`vit_config_pkg.sv`): up to 197 rows (tokens), an inner
@@ -298,24 +301,27 @@ the arithmetic is therefore made in both.
    model:** the op in `int8_model.py` and, if needed, how `golden_model.py`
    uses it. `int8_model.py` reads the parameters from `vit_config_pkg.sv`
    itself.
-3. **Regenerate the vectors:** `scripts/gen_vectors.sh`.
-4. **Run the module's testbench:** `scripts/sim.sh <module>` (for example
-   `scripts/sim.sh layernorm`). It prints PASS, or FAIL with the first
-   mismatching index; the log is in `sim/sim_<module>.log`. Debug with
-   `$display` in the testbench output.
-5. **Run the whole regression:** `scripts/regress.sh` (about an hour). Every
-   line must say PASS.
-6. **Check on the board:** rebuild the bitstream, check WNS and WHS ≥ 0 in the
-   build output, and run `run_image.py --digit 0 --step --check`, which
+3. **Regenerate the vectors:** `.venv/bin/python python/make_test_vectors.py`.
+4. **Run the module's testbench** in Vivado: make its simulation set active
+   (for example `layernorm`) and **Run Simulation**. The Tcl Console shows
+   PASS, or FAIL with the first mismatching index. Debug with `$display` in the
+   testbench output.
+5. **Run every simulation set** the same way. Every one must say PASS.
+6. **Check on the board:** **Generate Bitstream**, check WNS and WHS ≥ 0 in the
+   timing summary, and run `run_image.py --digit 0 --step --check`, which
    compares every stage the board computes with the model.
 
-For a **new module**: put it in `rtl/core/` or `rtl/interface/`, where
-`sim.sh` compiles every file automatically. Write `tb/tb_<module>.sv`, which
-reads golden vectors from `python/` and prints PASS or FAIL with the first
-mismatch, and add a line to the `runs` list in `scripts/regress.sh`. The Vivado
-project also picks up every file in `rtl/core/` and `rtl/interface/`; only
-new files under `boards/` have to be added to the list in
-`scripts/create_nexys_ddr_project.tcl`.
+For a **new module**: put it in `rtl/core/` or `rtl/interface/` and add it in
+Vivado (**Add Sources > Add or create design sources**). Write
+`tb/tb_<module>.sv`, which reads golden vectors from `python/` (through
+`` `VIT_ROOT`` from `tb/vit_paths.svh`) and prints PASS or FAIL with the first
+mismatch, and give it a simulation set: **Add Sources > Add or create
+simulation sources**, "Specify simulation set" > **Create Simulation Set**, add
+the testbench, `tb/vit_paths.svh`, the package `vit_config_pkg.sv` and the
+modules it tests. In the new set's settings (right-click > **Simulation
+Settings**) set the define `VIT_VIVADO_PROJECT`, the include directory `tb`
+and, under Simulation, `xsim.simulate.runtime` to `all`, as in the existing
+sets.
 
 ### Porting to another board (for example the Opal Kelly XEM7310)
 
@@ -338,7 +344,7 @@ use, and what to watch, is in
 - Never edit golden vectors or a testbench to make a test pass. A mismatch
   means the RTL and the Python model disagree, so fix the one that is wrong.
 - `rtl/core` was frozen during development, with its testbenches as the
-  contract. Changing it is fine, but run the whole regression afterwards.
+  contract. Changing it is fine, but run every simulation set afterwards.
 
 ---
 
@@ -346,7 +352,7 @@ use, and what to watch, is in
 
 | | Status |
 |---|---|
-| RTL against the golden model | Bit-exact: every testbench passes (`regress.sh`, 25 runs), including 6 and 12 layers through `RUN` |
+| RTL against the golden model | Bit-exact: every simulation set of `vivado/vit.xpr` passes (26 sets), including 6 layers through `RUN` and Xilinx's real AXI DMA |
 | Nexys A7 board | 2 layers on the board: all stages match the model (`--check`) and the digits are recognised. The current bitstream (tables for all 12 layers) builds at 100 MHz with timing met (WNS +0.386 ns) and uses 112 of 135 block RAM tiles. |
 | Opal Kelly (224 x 224) | Simulated only |
 | MNIST accuracy (2,000 test digits) | 90.4 % with 6 layers, 81.8 % with 12 |
@@ -381,10 +387,10 @@ Cosine similarity between the INT8 model and FP32, measured on 20 images
 
 - MNIST inputs are not natural images, so the numbers above may differ for the
   real use case. Calibrate on images from the target task.
-- No Vivado project is tracked; `create_nexys_ddr_project.tcl` makes one.
-- `rtl/core/rom` is a symbolic link to `rtl/rom/input_224` (the engine's
-  default tables). It does not survive a Windows checkout without symlink
-  support.
+- `rtl/core/rom` is a symbolic link to `rtl/rom/input_224`, the default ROM
+  file names of the engine's modules. Nothing in the project or the testbenches
+  uses it (they name their ROM files), so it does no harm where symbolic links
+  do not survive, as on Windows.
 - Some comments in `rtl/core` still name `golden/gen_deit_forward.py`, which
   is now `python/golden_model.py`.
 
@@ -394,6 +400,7 @@ Cosine similarity between the INT8 model and FP32, measured on 20 images
 
 | Document | Read it when |
 |---|---|
+| [docs/VIVADO_GUI.md](docs/VIVADO_GUI.md) | You use the project in Vivado: simulation sets, bitstream, programming, running a digit |
 | [docs/SPEC.md](docs/SPEC.md) | You want the design decisions and the DDR/DMA architecture |
 | [docs/ENGINE.md](docs/ENGINE.md) | You change the engine: descriptor format, buffer layouts, cycle counts, resources |
 | [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md) | You change the PC ↔ board protocol |

@@ -2,7 +2,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Self-checking testbench of accelerator_system with the real AXI DMA: Xilinx's
 // simulation model of axi_dma 7.1, configured as in the block design
-// memory_system (scripts/export_dma_ip_sim.tcl), in place of the behavioural
+// memory_system (the IP dma_ip of the simulation set dma_ip), in place of the behavioural
 // memory_system_model.sv. It checks the bridge's DMA_LOAD sequence against the
 // DMA itself: MM2S_DMACR, MM2S_SA, MM2S_LENGTH, the DMASR polling, the stream
 // with TLAST, through the stream multiplexer into the AXI wrapper.
@@ -23,12 +23,14 @@
 // item of every DMA_LOAD and of every LOAD entry the RUNs carry out
 // (host_stream_ddrcheck_summary.txt, as host.run_totals counts them).
 //
-// Run with scripts/sim_dma_ip.sh, not sim.sh: it needs the DMA's libraries.
+// Run with the simulation set dma_ip, which holds the DMA IP and its libraries.
 // Vectors: python/models/nexys_L2/host_stream_ddrcheck_*.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_dma_ip #(
-    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/nexys_L2/"}
 );
 
     localparam int          TX_BYTES_MAX     = 262144;
@@ -72,9 +74,9 @@ module tb_dma_ip #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  (`VIT_ROM_112("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_112("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_112("rsqrt_rom.hex"))
     ) dut (
         .aclk                 (CLK),
         .aresetn              (!reset),

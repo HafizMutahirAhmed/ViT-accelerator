@@ -2,7 +2,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: memory_system_wrapper (simulation model)
 // Description: Behavioural model of the block design memory_system
-// (scripts/create_memory_system_bd.tcl) with the generated wrapper's name and
+// (vivado/vit.srcs/sources_1/bd/memory_system) with the generated wrapper's name and
 // ports, for the testbenches of accelerator_system and nexys_top_ddr. It is
 // what the bridge sees of the MIG, the AXI DMA and the SmartConnect:
 //

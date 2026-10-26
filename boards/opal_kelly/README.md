@@ -52,10 +52,11 @@ program uses.
      not copy it into the repo;
    - the clocks and resets for the XEM7310's oscillator.
 
-3. **The memory system.** `scripts/create_memory_system_bd.tcl` builds MIG +
-   AXI DMA + SmartConnect for the Nexys. Copy it and replace the MIG
-   configuration with the XEM7310's DDR3 one (Opal Kelly publishes the MIG
-   settings for the board). The DMA, SmartConnect and the address map
+3. **The memory system.** The block design `memory_system` in `vivado/vit.xpr`
+   is MIG + AXI DMA + SmartConnect for the Nexys. In the new project (step 5)
+   keep it and re-customize the MIG (double-click it in the block design) with
+   the XEM7310's DDR3 settings (Opal Kelly publishes the MIG settings for the
+   board). The DMA, SmartConnect and the address map
    (DMA at 0x4040_0000, DDR at 0x8000_0000) can stay. The weights do not
    grow with the image size: 2 layers take about 1.3 MB of DDR, 12 layers
    about 6 MB, far below the 128 MiB `python/host.py` assumes (`DDR_BYTES`).
@@ -64,8 +65,11 @@ program uses.
    Nexys's come from Digilent's (`boards/nexys_a7/nexys_a7_ddr.xdc` shows the
    style: copied lines, the source and its checksum in the header).
 
-5. **Build script.** Copy `scripts/create_nexys_ddr_project.tcl` and
-   `scripts/build_nexys_ddr.tcl`; part `xc7a200tfbg484-1`.
+5. **Vivado project.** Open `vivado/vit.xpr`, **File > Project > Save As** a new
+   project, and set the part to `xc7a200tfbg484-1` (**Settings > General >
+   Project device**). Replace the Nexys top, UART and constraints with the new
+   ones, and the ROM files of `rtl/rom/input_112` with those of
+   `rtl/rom/input_224`.
 
 6. **Host software.**
    - `python/host.py`: a FrontPanel transport, a class with
@@ -76,7 +80,7 @@ program uses.
      the DDR image and the `RUN` flow in `host.py` work unchanged.
 
 7. **Test before the board.**
-   - `scripts/regress.sh`: the 224 engine tests must still pass.
+   - Every simulation set of `vivado/vit.xpr`: the 224 engine tests must still pass.
    - A testbench of the new top through its pins, like
      `tb/tb_nexys_top_ddr.sv`, and a replay of the host's byte stream, like
      `tb/tb_axi_replay_run.sv` with the opal_kelly model and depths.

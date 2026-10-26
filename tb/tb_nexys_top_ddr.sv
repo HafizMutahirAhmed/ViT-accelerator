@@ -21,17 +21,19 @@
 // byte may be lost (LED 3) and the error LED (LED 2) must stay off.
 //
 // Vectors: python/models/nexys_L2/host_stream_ddrcheck_tx.hex, _rx.hex,
-// _packets.txt (scripts/gen_vectors.sh).
+// _packets.txt (python/make_test_vectors.py).
 //
-// sim.sh: also compile ../boards/nexys_a7/uart_rx.sv
-// sim.sh: also compile ../boards/nexys_a7/uart_tx.sv
-// sim.sh: also compile ../boards/nexys_a7/nexys_top_ddr.sv
-// sim.sh: also compile system_clock_generator_model.sv
-// sim.sh: also compile memory_system_model.sv
+// also compile: ../boards/nexys_a7/uart_rx.sv
+// also compile: ../boards/nexys_a7/uart_tx.sv
+// also compile: ../boards/nexys_a7/nexys_top_ddr.sv
+// also compile: system_clock_generator_model.sv
+// also compile: memory_system_model.sv
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_nexys_top_ddr #(
-    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/nexys_L2/"}
 );
 
     localparam int CLOCKS_PER_BIT   = 8;
@@ -48,8 +50,11 @@ module tb_nexys_top_ddr #(
     logic [4:0] led;
 
     nexys_top_ddr #(
-        .CLOCK_HZ  (CLOCK_HZ),
-        .BAUD_RATE (CLOCK_HZ / CLOCKS_PER_BIT)
+        .CLOCK_HZ       (CLOCK_HZ),
+        .BAUD_RATE      (CLOCK_HZ / CLOCKS_PER_BIT),
+        .GELU_ROM_FILE  (`VIT_ROM_112("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_112("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_112("rsqrt_rom.hex"))
     ) dut (
         .CLK100MHZ    (CLK),
         .ck_rst       (ck_rst),

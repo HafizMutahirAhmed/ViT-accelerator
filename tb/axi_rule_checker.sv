@@ -5,7 +5,7 @@
 // channel or an AXI4-Stream). The AXI rule: once VALID is high it stays high,
 // and the payload stays the same, until the cycle READY is high with it.
 //
-// A violation is reported with $error (which makes sim.sh fail) and counted
+// A violation is reported with $error (an ERROR line in the log) and counted
 // in `violations`. `beats` counts the transfers. Checking is off while reset
 // is high, and can be relaxed for one cycle after `flush` (a soft reset is
 // allowed to drop a pending transfer).

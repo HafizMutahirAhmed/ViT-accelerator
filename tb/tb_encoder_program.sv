@@ -29,8 +29,10 @@
 // 8x8 only.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_encoder_program #(
-    parameter string VECTOR_DIR     = "../../python/models/opal_kelly_L2/",
+    parameter string VECTOR_DIR     = {`VIT_ROOT, "python/models/opal_kelly_L2/"},
     // words per bank of pool buffers 0 .. 7: the plan in python/layer_program.py,
     // which the generator also writes to program_plan.txt
     parameter int    DEPTH_X        = 4800,
@@ -41,9 +43,9 @@ module tb_encoder_program #(
     parameter int    DEPTH_QV       = 9528,
     parameter int    DEPTH_K        = 4800,
     parameter int    DEPTH_UNUSED   = 16,
-    parameter string GELU_ROM_FILE  = "rom/gelu_rom.hex",
-    parameter string EXP_ROM_FILE   = "rom/exp_rom.hex",
-    parameter string RSQRT_ROM_FILE = "rom/rsqrt_rom.hex"
+    parameter string GELU_ROM_FILE  = `VIT_ROM_224("gelu_rom.hex"),
+    parameter string EXP_ROM_FILE   = `VIT_ROM_224("exp_rom.hex"),
+    parameter string RSQRT_ROM_FILE = `VIT_ROM_224("rsqrt_rom.hex")
 );
 
     localparam int SYS_ROW                = 8;

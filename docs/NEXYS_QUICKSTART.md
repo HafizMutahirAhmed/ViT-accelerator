@@ -1,6 +1,6 @@
 # Nexys A7-100T quick start
 
-From a fresh clone to a digit recognised on a Digilent Nexys A7-100T
+From the project to a digit recognised on a Digilent Nexys A7-100T
 (xc7a100tcsg324-1). The design is `nexys_top_ddr`: the accelerator, the board's 128 MiB DDR2 behind an AXI DMA (block design
 `memory_system`: MIG, AXI DMA, SmartConnect; a Clocking Wizard makes the
 clocks), and the USB-UART to the host. A 28 x 28 digit is resized to 112 x 112
@@ -27,8 +27,9 @@ from the clocking wizard. Sources and checksums are in the files.
   `<Vivado>/data/xicom/cable_drivers/lin64/install_script/install_drivers/install_drivers` once, as root.
 - Python 3 with `numpy`, `Pillow` and `pyserial`, and on Linux membership of the
   `dialout` group for the serial port.
-- A model: `python/models/nexys_L<N>/`, made by `make_model.py`, which needs
-  `torch`, `timm` and `torchvision` in `.venv/`:
+- A model: `python/models/nexys_L<N>/` (2, 6 and 12 layers are in the package).
+  Another one is made by `make_model.py`, which needs `torch`, `timm` and
+  `torchvision` in `.venv/`:
 
 ```sh
 python3 -m venv --system-site-packages .venv
@@ -65,21 +66,12 @@ model does.
 
 ## Build
 
-In the GUI: **Tools > Run Tcl Script...** with `scripts/create_nexys_ddr_project.tcl`
-(it creates `build/nexys_a7_ddr_project/nexys_a7_ddr.xpr` with top `nexys_top_ddr`,
-the clocking wizard and the block design), then **Generate Bitstream**. In batch:
-
-```sh
-vivado -mode batch -source scripts/create_nexys_ddr_project.tcl
-vivado -mode batch -source scripts/build_nexys_ddr.tcl
-```
-
-`build_nexys_ddr.tcl` writes the reports to `build/nexys_a7_ddr_reports/` and
-prints WNS and WHS; both must be 0 or more. Program the device (**Open Hardware
-Manager > Open Target > Auto Connect > Program Device**) with
-`build/nexys_top_ddr.bit`, where the batch build copies it (a GUI build leaves it
-in `build/nexys_a7_ddr_project/nexys_a7_ddr.runs/impl_1/`). The project and the
-reports can be deleted afterwards; the scripts make them again.
+In Vivado, open `vivado/vit.xpr` and click **Generate Bitstream** (it runs
+synthesis and implementation first). Then **Open Implemented Design > Report
+Timing Summary**: WNS and WHS must both be 0 or more. Program the device
+(**Open Hardware Manager > Open Target > Auto Connect > Program Device**) with
+`vivado/vit.runs/impl_1/nexys_top_ddr.bit`. The details are in
+[VIVADO_GUI.md](VIVADO_GUI.md).
 
 ## Run
 

@@ -8,13 +8,15 @@
 //
 // Vectors: python/make_model.py --board nexys --layers 2, in python/models/nexys_L2.
 //
-// sim.sh: also compile tb_encoder_program.sv
+// also compile: tb_encoder_program.sv
 //////////////////////////////////////////////////////////////////////////////////
+
+`include "vit_paths.svh"
 
 module tb_encoder_program_nexys;
 
     tb_encoder_program #(
-        .VECTOR_DIR     ("../../python/models/nexys_L2/"),
+        .VECTOR_DIR     ({`VIT_ROOT, "python/models/nexys_L2/"}),
         .DEPTH_X        (1344),
         .DEPTH_W        (16384),
         .DEPTH_BIG      (5376),
@@ -23,9 +25,9 @@ module tb_encoder_program_nexys;
         .DEPTH_QV       (2544),
         .DEPTH_K        (1344),
         .DEPTH_UNUSED   (16),
-        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  (`VIT_ROM_112("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_112("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_112("rsqrt_rom.hex"))
     ) program_tb ();
 
 endmodule

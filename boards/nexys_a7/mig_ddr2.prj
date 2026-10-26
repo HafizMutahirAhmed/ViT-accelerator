@@ -10,8 +10,8 @@
   One change: SystemClock "Single-Ended" -> "No Buffer". The MIG then takes its
   100 MHz system clock from the clocking wizard (system_clock_generator) instead
   of putting its own input buffer on pin E3, which the design's clock already
-  uses. ModuleName is replaced with the block design's component name by
-  scripts/create_memory_system_bd.tcl. Everything else is Digilent's: the DDR2
+  uses. ModuleName is replaced with the block design's component name when
+  the block design memory_system is made. Everything else is Digilent's: the DDR2
   part MT47H64M16HR-25E, 16 bits, 325 MHz (3077 ps), 4:1, the pins, the timing,
   the 128-bit AXI port; the reference clock (No Buffer) is a 200 MHz input.
 -->

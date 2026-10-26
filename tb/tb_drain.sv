@@ -22,10 +22,12 @@
 // bias[c], bias[c + SYS_COL], ... and is addressed by the tile column.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_drain #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../../python/vectors/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/vectors/"}
 );
 
     import vit_config_pkg::DRAIN_ROW_SELECT;

@@ -404,7 +404,7 @@ phase's last output is also read back through the host port.
 
 ## Verification and timing
 
-`scripts/regress.sh` runs every testbench and prints one line per run.
+Every testbench is a simulation set of `vivado/vit.xpr` and prints one PASS or FAIL line.
 
 | Testbench | What it checks |
 |---|---|

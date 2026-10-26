@@ -2,7 +2,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: system_clock_generator (simulation model)
 // Description: Behavioural model of the Clocking Wizard IP of the same name
-// that scripts/create_nexys_ddr_project.tcl generates, for tb_nexys_top_ddr:
+// in vivado/vit.xpr, for tb_nexys_top_ddr:
 // clk_out1 is clk_in1 (100 MHz), clk_out2 a 200 MHz clock, and locked rises
 // LOCK_CYCLES cycles of clk_in1 after the start.
 //////////////////////////////////////////////////////////////////////////////////

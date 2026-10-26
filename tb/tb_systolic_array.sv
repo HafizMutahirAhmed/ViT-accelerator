@@ -16,10 +16,12 @@
 // Vectors exist for 2x2, 4x4, 3x5, 12x12 and 16x16 arrays.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_systolic_array #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../../python/vectors/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/vectors/"}
 );
 
     localparam int DATA_WIDTH = vit_config_pkg::DATA_WIDTH;

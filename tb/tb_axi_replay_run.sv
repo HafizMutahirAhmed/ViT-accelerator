@@ -29,12 +29,14 @@
 // Vectors: python/models/nexys_L2/host_stream_run_tx.hex, host_stream_run_rx.hex,
 // host_stream_run_packets.txt and host_stream_run_summary.txt. 8x8 only.
 //
-// sim.sh: also compile axi_rule_checker.sv
-// sim.sh: also compile memory_system_model.sv
+// also compile: axi_rule_checker.sv
+// also compile: memory_system_model.sv
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_axi_replay_run #(
-    parameter string VECTOR_DIR = "../../python/models/nexys_L2/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/nexys_L2/"}
 );
 
     localparam int TX_BYTES_MAX     = 16777216;     // a 12-layer model uploads about 6.3 MB
@@ -75,9 +77,9 @@ module tb_axi_replay_run #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  (`VIT_ROM_112("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_112("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_112("rsqrt_rom.hex"))
     ) dut (
         .aclk                 (CLK),
         .aresetn              (!reset),

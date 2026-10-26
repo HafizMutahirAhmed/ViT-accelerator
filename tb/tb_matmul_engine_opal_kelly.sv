@@ -24,10 +24,12 @@
 //   descriptor  descriptor_t as 32-bit words. Tables are for an 8x8 array.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_matmul_engine_opal_kelly #(
     parameter int    SYS_ROW    = 8,
     parameter int    SYS_COL    = 8,
-    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/matmuls/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/opal_kelly_L2/matmuls/"}
 );
 
     import vit_config_pkg::descriptor_t;
@@ -79,9 +81,12 @@ module tb_matmul_engine_opal_kelly #(
     logic [SYS_COL-1:0][ACC_WIDTH-1:0] host_bias_read_data;
 
     matmul_engine #(
-        .SYS_ROW      (SYS_ROW),
-        .SYS_COL      (SYS_COL),
-        .BUFFER_DEPTH ({BUFFER_COUNT{32'(BUFFER_DEPTH)}})
+        .SYS_ROW        (SYS_ROW),
+        .SYS_COL        (SYS_COL),
+        .BUFFER_DEPTH   ({BUFFER_COUNT{32'(BUFFER_DEPTH)}}),
+        .GELU_ROM_FILE  (`VIT_ROM_224("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_224("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_224("rsqrt_rom.hex"))
     ) dut (
         .CLK                          (CLK),
         .reset                        (reset),

@@ -16,9 +16,11 @@
 //   descriptor         rows_total, cols_total, bias_base = which exp table
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_softmax #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/opal_kelly_L2/"}
 );
 
     import vit_config_pkg::descriptor_t;
@@ -58,7 +60,8 @@ module tb_softmax #(
     int entries_wrong = 0;
 
     softmax #(
-        .LANES (LANES)
+        .LANES    (LANES),
+        .ROM_FILE (`VIT_ROM_224("exp_rom.hex"))
     ) dut (
         .CLK          (CLK),
         .reset        (reset),

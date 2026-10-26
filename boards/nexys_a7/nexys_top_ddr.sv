@@ -4,7 +4,7 @@
 // Description: Digilent Nexys A7-100T top level of the accelerator with the
 // board's DDR2 as external memory. The UART's byte stream goes to
 // accelerator_system (bridge, AXI wrapper, engine); the block design
-// memory_system (scripts/create_memory_system_bd.tcl: MIG, AXI DMA,
+// memory_system (in vivado/vit.xpr: MIG, AXI DMA,
 // SmartConnect) holds the weights in DDR2 and streams them into the engine
 // on DMA_LOAD. The host protocol is docs/HOST_PROTOCOL.md; the host script is
 // python/run_image.py --ddr. Pins: boards/nexys_a7/nexys_a7_ddr.xdc, the DDR2
@@ -37,9 +37,13 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module nexys_top_ddr #(
-    parameter int CLOCK_HZ     = 100_000_000,
-    parameter int BAUD_RATE    = 921_600,
-    parameter int RESET_CYCLES = 255
+    parameter int    CLOCK_HZ       = 100_000_000,
+    parameter int    BAUD_RATE      = 921_600,
+    parameter int    RESET_CYCLES   = 255,
+    // the ROM images of the 112 x 112 configuration, named the way synthesis finds them
+    parameter string GELU_ROM_FILE  = "../rom/input_112/gelu_rom.hex",
+    parameter string EXP_ROM_FILE   = "../rom/input_112/exp_rom.hex",
+    parameter string RSQRT_ROM_FILE = "../rom/input_112/rsqrt_rom.hex"
 ) (
     input  logic        CLK100MHZ,
     input  logic        ck_rst,
@@ -177,9 +181,9 @@ module nexys_top_ddr #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
+        .GELU_ROM_FILE  (GELU_ROM_FILE),
+        .EXP_ROM_FILE   (EXP_ROM_FILE),
+        .RSQRT_ROM_FILE (RSQRT_ROM_FILE)
     ) accelerator (
         .aclk                 (CLK),
         .aresetn              (!reset),

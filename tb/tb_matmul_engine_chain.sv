@@ -28,10 +28,12 @@
 // Tables exist for 4x4, 8x8, 12x12 and 16x16 arrays.
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_matmul_engine_chain #(
     parameter int    SYS_ROW    = 4,
     parameter int    SYS_COL    = 4,
-    parameter string VECTOR_DIR = "../../python/vectors/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/vectors/"}
 );
 
     import vit_config_pkg::descriptor_t;
@@ -84,9 +86,12 @@ module tb_matmul_engine_chain #(
     logic [SYS_COL-1:0][ACC_WIDTH-1:0] host_bias_read_data;
 
     matmul_engine #(
-        .SYS_ROW      (SYS_ROW),
-        .SYS_COL      (SYS_COL),
-        .BUFFER_DEPTH ({{6{32'(BUFFER_DEPTH)}}, 32'(WEIGHT_BUFFER_DEPTH), 32'(BUFFER_DEPTH)})
+        .SYS_ROW        (SYS_ROW),
+        .SYS_COL        (SYS_COL),
+        .BUFFER_DEPTH   ({{6{32'(BUFFER_DEPTH)}}, 32'(WEIGHT_BUFFER_DEPTH), 32'(BUFFER_DEPTH)}),
+        .GELU_ROM_FILE  (`VIT_ROM_224("gelu_rom.hex")),
+        .EXP_ROM_FILE   (`VIT_ROM_224("exp_rom.hex")),
+        .RSQRT_ROM_FILE (`VIT_ROM_224("rsqrt_rom.hex"))
     ) dut (
         .CLK                          (CLK),
         .reset                        (reset),

@@ -16,9 +16,11 @@
 //                      bias_base[7:0] = multiplier b, shift
 //////////////////////////////////////////////////////////////////////////////////
 
+`include "vit_paths.svh"
+
 module tb_residual_add #(
     parameter int    LANES      = vit_config_pkg::SYS_ROW,
-    parameter string VECTOR_DIR = "../../python/models/opal_kelly_L2/"
+    parameter string VECTOR_DIR = {`VIT_ROOT, "python/models/opal_kelly_L2/"}
 );
 
     import vit_config_pkg::descriptor_t;

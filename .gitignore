@@ -18,7 +18,7 @@ xsim.dir/
 *.wdb
 *.pb
 
-# Vectors, models and MNIST: scripts/gen_vectors.sh regenerates all of them
+# Vectors, models and MNIST: python/make_test_vectors.py regenerates all of them
 python/vectors/
 python/models/
 python/mnist/

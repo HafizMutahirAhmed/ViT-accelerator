@@ -6,17 +6,19 @@
 // --model-dir python/models/nexys_L12, made after
 // python/make_model.py --board nexys --layers 12.
 // The program has more than 256 descriptors, so the run list loads them phase
-// by phase. About two hours of simulation; not in scripts/regress.sh.
+// by phase. About two hours of simulation.
 //
-// sim.sh: also compile tb_axi_replay_run.sv
-// sim.sh: also compile axi_rule_checker.sv
-// sim.sh: also compile memory_system_model.sv
+// also compile: tb_axi_replay_run.sv
+// also compile: axi_rule_checker.sv
+// also compile: memory_system_model.sv
 //////////////////////////////////////////////////////////////////////////////////
+
+`include "vit_paths.svh"
 
 module tb_axi_replay_run_nexys_L12;
 
     tb_axi_replay_run #(
-        .VECTOR_DIR ("../../python/models/nexys_L12/")
+        .VECTOR_DIR ({`VIT_ROOT, "python/models/nexys_L12/"})
     ) replay ();
 
 endmodule

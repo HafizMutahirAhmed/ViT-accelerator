@@ -29,8 +29,6 @@ for f in "$root"/rtl/core/*.sv "$root"/rtl/interface/*.sv "$root"/rtl/interface/
 done
 
 mkdir -p "$root/sim/sim_dma_ip"
-ln -sfn ../../rtl/rom/input_224 "$root/sim/sim_dma_ip/rom"
-ln -sfn ../rtl/rom "$root/sim/rom"
 cd "$root/sim/sim_dma_ip"
 
 log=../sim_dma_ip.log
@@ -38,7 +36,7 @@ status=0
 {
     xvhdl --relax -work xil_defaultlib "$wrapper" &&
     xvlog --relax -work xil_defaultlib "$export_dir/glbl.v" &&
-    xvlog -sv -work xil_defaultlib "$pkg" "${rtl[@]}" "$root/tb/axi_rule_checker.sv" "$root/tb/tb_dma_ip.sv" &&
+    xvlog -sv -i "$root/tb" -work xil_defaultlib "$pkg" "${rtl[@]}" "$root/tb/axi_rule_checker.sv" "$root/tb/tb_dma_ip.sv" &&
     xelab --relax $libraries -L unisims_ver -L secureip xil_defaultlib.tb_dma_ip xil_defaultlib.glbl \
         -s sim_dma_ip &&
     xsim sim_dma_ip -runall
