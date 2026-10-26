@@ -41,6 +41,8 @@ done
 cp "$root"/python/mnist/MNIST/raw/*.gz "$stage/python/mnist/MNIST/raw/"
 cp "$results/nexys_top_ddr.bit" "$stage/bitstream/"
 cp "$results"/*.log "$results/timing_summary.txt" "$results/utilization.txt" "$stage/test_results/"
+# The check ran in a temporary copy; the logs name files relative to the project folder instead.
+sed -i -E 's#/[^ "]*/ViT-implementation/##g' "$stage"/test_results/*
 
 python3 - "$results" "$stage/test_results/SUMMARY.md" "$commit" <<'EOF'
 import datetime, os, re, sys
@@ -52,7 +54,7 @@ utilization = open(os.path.join(results, "utilization.txt")).read()
 
 def used(name):
     m = re.search(r"^\|\s*" + re.escape(name) + r"\s*\|\s*([\d.]+)\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)", utilization, re.M)
-    return f"{m.group(1)} of {m.group(3)}" if m else "see utilization.txt"
+    return f"{m.group(1)} of {m.group(2)} ({m.group(3)} %)" if m else "see utilization.txt"
 
 def duration(seconds):
     seconds = int(seconds)
