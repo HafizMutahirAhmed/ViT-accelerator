@@ -12,8 +12,8 @@ MNIST digits; here they are resized by 8 instead of 4.
 |---|---|
 | The engine (`rtl/core`) at 224 x 224 | simulated bit-exact: `tb_encoder_program` (the whole 2-layer program, 197 tokens), `tb_matmul_engine_opal_kelly` (all 39 matmuls), the non-linear unit testbenches |
 | The model files | `python/make_model.py --board opal_kelly --layers N`, any N from 1 to 12 |
-| The tables of all 12 layers | `rtl/rom/opal_kelly/` (in the repo) |
-| The scales | `python/calibration/opal_kelly_scales.json` (in the repo) |
+| The tables of all 12 layers | `rtl/rom/input_224/` (in the repo) |
+| The scales | `python/calibration/input_224_scales.json` (in the repo) |
 | The bridge, `RUN`, the AXI DMA path | `rtl/interface`, tested on the Nexys and against Xilinx's AXI DMA |
 | The host protocol | `docs/HOST_PROTOCOL.md`, the same on every board |
 
@@ -43,7 +43,7 @@ program uses.
    `boards/nexys_a7/nexys_top_ddr.sv` and change:
    - the pool depths to the `opal_kelly` entry of `BOARDS` in
      `python/make_model.py` (4800, 55296, 19200, 4800, 14775, 9528, 4800, 16);
-   - the ROM files to `../rom/opal_kelly/...`;
+   - the ROM files to `../rom/input_224/...`;
    - the transport: replace `uart_rx` and `uart_tx` with a FrontPanel adapter
      that turns a pipe-in and a pipe-out into the byte stream
      `accelerator_system` takes (`rx_data`/`rx_valid`/`rx_ready`,

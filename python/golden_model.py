@@ -30,7 +30,7 @@ class token + position 0 - that bias row.
 
 Tables. GELU has one 256-entry table per layer, softmax one exp table per head
 and layer, LayerNorm one reciprocal-square-root table; they are the engine's
-ROMs (rtl/rom/<board>/), made by write_roms() from a 12-layer pass so that
+ROMs (rtl/rom/input_<size>/), made by write_roms() from a 12-layer pass so that
 every N finds its tables there.
 """
 

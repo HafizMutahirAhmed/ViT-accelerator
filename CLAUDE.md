@@ -6,7 +6,7 @@ Spec: @docs/SPEC.md. Tell me if a request conflicts with it.
 ## Layout
 - rtl/core/       the engine and the non-linear units. FROZEN: do not change it unless I ask.
 - rtl/interface/  host protocol, AXI wrapper and bridge.
-- rtl/rom/        table images per board (nexys, opal_kelly), all 12 layers; generated, committed.
+- rtl/rom/        table images per input size (input_112: nexys, input_224: opal_kelly), all 12 layers; generated, committed.
 - tb/             self-checking testbenches, tb_<name>.sv.
 - boards/         one directory per board: top level, transport, constraints.
 - python/         golden models, generators, host software.

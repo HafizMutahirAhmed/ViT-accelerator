@@ -15,8 +15,8 @@
 #    board, for the replay testbenches: run_image.py (tb_axi_replay_run, --step for
 #    tb_axi_replay_step) and ddr_check.py (tb_nexys_top_ddr, tb_dma_ip)
 #
-# The tensor scales (python/calibration/<board>_scales.json) and the digit classifiers
-# (python/calibration/<board>_L<layers>_probe.npz) are in the repo, so the vectors are the same on
+# The tensor scales (python/calibration/input_<size>_scales.json) and the digit classifiers
+# (python/calibration/input_<size>_L<layers>_probe.npz) are in the repo, so the vectors are the same on
 # every run. Step 2 needs torch, timm and torchvision in .venv:
 #   python3 -m venv --system-site-packages .venv && .venv/bin/pip install torch torchvision timm
 set -euo pipefail

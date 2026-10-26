@@ -43,9 +43,9 @@ python3 -m venv --system-site-packages .venv
 ```
 
 It writes `python/models/nexys_L6/`. The scales of all 12 layers are in
-`python/calibration/nexys_scales.json`; the first time a layer count is made,
+`python/calibration/input_112_scales.json`; the first time a layer count is made,
 its digit classifier is trained (a few minutes to an hour for 12 layers) and
-kept in `python/calibration/nexys_L<N>_probe.npz`. `--report` also prints the
+kept in `python/calibration/input_112_L<N>_probe.npz`. `--report` also prints the
 accuracy on 2,000 test digits. The bitstream holds the tables of all 12 layers,
 so **the same bitstream runs every layer count**; `run_image.py --model-dir`
 picks the model.

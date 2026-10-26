@@ -7,7 +7,7 @@
 // the engine does it: LANES rows per cycle and, for each row tile, three
 // passes with a wait for pass_ready before the second and the third.
 // valid_in drops now and then. Every valid output is compared with the golden
-// tensor (0..127). The ROM is the one the design uses, rtl/rom/opal_kelly/exp_rom.hex.
+// tensor (0..127). The ROM is the one the design uses, rtl/rom/input_224/exp_rom.hex.
 //
 // Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, s file, "-", p file,

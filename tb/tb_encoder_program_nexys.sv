@@ -23,9 +23,9 @@ module tb_encoder_program_nexys;
         .DEPTH_QV       (2544),
         .DEPTH_K        (1344),
         .DEPTH_UNUSED   (16),
-        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
     ) program_tb ();
 
 endmodule

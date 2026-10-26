@@ -8,7 +8,7 @@
 // the input the way the engine does it: LANES rows per cycle and, for each
 // row tile, the statistics pass, a wait for pass_ready, and the output pass.
 // valid_in drops now and then. Every valid output is compared with the golden
-// INT8 tensor. The ROM is the one the design uses, rtl/rom/opal_kelly/rsqrt_rom.hex.
+// INT8 tensor. The ROM is the one the design uses, rtl/rom/input_224/rsqrt_rom.hex.
 //
 // Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, x file, "-", y file,

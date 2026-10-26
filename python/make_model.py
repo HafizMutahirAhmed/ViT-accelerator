@@ -9,7 +9,7 @@ Usage: .venv/bin/python python/make_model.py --board nexys --layers 2      (need
                         the host sums the patch rows), one per board and number of layers
   --layers N            1 .. 12 encoder layers
   --recalibrate         work the tensor scales out again and rewrite
-                        python/calibration/<board>_scales.json (they cover all 12 layers)
+                        python/calibration/input_<size>_scales.json (they cover all 12 layers)
   --retrain             train the digit classifier of N layers again
   --report              also print the accuracy on test images the scales and the classifier
                         never saw
@@ -19,10 +19,11 @@ golden tensors), the descriptor program, the loads of every phase and host_confi
 python/run_image.py and python/ddr_check.py read (--model-dir). For opal_kelly also matmuls/,
 every matmul on its own (tb_matmul_engine_opal_kelly).
 
-Kept in the repo, made here when missing:
-  python/calibration/<board>_scales.json       the scale of every tensor, all 12 layers
-  python/calibration/<board>_L<N>_probe.npz    the digit classifier of N layers
-  rtl/rom/<board>/                             the engine's tables (GELU, exp, 1/sqrt) for all
+Kept in the repo, made here when missing; named after the board's input size (112 or 224),
+which is what they depend on:
+  python/calibration/input_<size>_scales.json      the scale of every tensor, all 12 layers
+  python/calibration/input_<size>_L<N>_probe.npz   the digit classifier of N layers
+  rtl/rom/input_<size>/                        the engine's tables (GELU, exp, 1/sqrt) for all
                                                12 layers; they are part of the bitstream. If the
                                                tables change (a recalibration), the script says
                                                so: the bitstream must then be built again.
@@ -141,8 +142,13 @@ def calibrate(model, data):
     return {key: value / DATA_MAX for key, value in largest.items()}
 
 
+def input_name(board):
+    """The name of the files that depend only on the board's input size: input_112, input_224."""
+    return f"input_{BOARDS[board]['size']}"
+
+
 def probe_file(board, layers):
-    return os.path.join(CALIBRATION_DIR, f"{board}_L{layers}_probe.npz")
+    return os.path.join(CALIBRATION_DIR, f"{input_name(board)}_L{layers}_probe.npz")
 
 
 def features(parameters, data, items, tokens):
@@ -217,14 +223,15 @@ def report(data, parameters, layers):
 
 
 def write_roms(board, model, scales, embed_in_real, forward):
-    """The tables of all 12 layers into rtl/rom/<board>/; this pass's tables must be their first ones."""
+    """The tables of all 12 layers into rtl/rom/input_<size>/; this pass's tables must be their first ones."""
     full = golden.Forward(golden.Model(model, golden.target_for(scales, golden.MAX_LAYERS), golden.MAX_LAYERS,
                                        classifiers=[])).run(embed_in_real)
     images, own = golden.rom_images(full), golden.rom_images(forward)
     for name in ("gelu_rom.hex", "exp_rom.hex"):
         used = np.nonzero(own[name][0])[0]
         assert np.array_equal(own[name][0][used], images[name][0][used]), name
-    rom_dir = os.path.join(REPO_DIR, "rtl", "rom", board)
+    rom_name = input_name(board)
+    rom_dir = os.path.join(REPO_DIR, "rtl", "rom", rom_name)
     os.makedirs(rom_dir, exist_ok=True)
     changed = []
     for name, (values, width) in images.items():
@@ -234,9 +241,9 @@ def write_roms(board, model, scales, embed_in_real, forward):
         if open(path).read() != old:
             changed.append(name)
     if changed:
-        print(f"ROM: {', '.join(changed)} in rtl/rom/{board} changed: build the bitstream again")
+        print(f"ROM: {', '.join(changed)} in rtl/rom/{rom_name} changed: build the bitstream again")
     else:
-        print(f"ROM: rtl/rom/{board} already holds these tables, the bitstream needs no rebuild")
+        print(f"ROM: rtl/rom/{rom_name} already holds these tables, the bitstream needs no rebuild")
 
 
 def main():
@@ -255,7 +262,7 @@ def main():
     model = load_model(board)
     data = Data(board)
     os.makedirs(CALIBRATION_DIR, exist_ok=True)
-    scales_file = os.path.join(CALIBRATION_DIR, f"{board}_scales.json")
+    scales_file = os.path.join(CALIBRATION_DIR, f"{input_name(board)}_scales.json")
     if args.recalibrate or not os.path.exists(scales_file):
         golden.save_scales(scales_file, calibrate(model, data))
         print(f"calibrated: wrote {os.path.relpath(scales_file, REPO_DIR)}")
@@ -288,7 +295,7 @@ def main():
     label = data.label(data.test_image)
     with open(os.path.join(out_dir, "host_config.json"), "w") as f:
         json.dump({"board": board, "layers": layers, "size": spec["size"], "tokens": spec["tokens"],
-                   "input_scale": target["embed_in"], "rom_dir": f"rtl/rom/{board}", "depths": spec["depths"],
+                   "input_scale": target["embed_in"], "rom_dir": f"rtl/rom/{input_name(board)}", "depths": spec["depths"],
                    "test_image": data.name(data.test_image)}, f, indent=1)
     with open(os.path.join(out_dir, "expected_answer.txt"), "w") as f:
         f.write(f"{label} {answer(forward)}\n")

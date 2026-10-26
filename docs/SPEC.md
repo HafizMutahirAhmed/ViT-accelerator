@@ -15,7 +15,7 @@ a setting of the host software, not of the bitstream: see
   and a linear classifier.
 - INT8 tensors everywhere, residual stream included; INT32 accumulation. One
   scale per tensor, taken from calibration data and kept in the repo
-  (`python/calibration/<board>_scales.json`, all 12 layers).
+  (`python/calibration/input_<size>_scales.json`, all 12 layers).
 - Requantizer: `out = clip((acc * scale) >>> shift)` with an 8-bit scale and a
   5-bit shift. Half an LSB in the bias makes it round to nearest.
 - Non-linear ops in integer arithmetic: residual add with two multipliers,
@@ -44,12 +44,12 @@ holds for all 12 layers.
 What makes any N work on one bitstream:
 
 - **Tables.** `vit_config_pkg` has room for the GELU table of every layer (12)
-  and the exp table of every head (36); `rtl/rom/<board>/` holds them for all
+  and the exp table of every head (36); `rtl/rom/input_<size>/` holds them for all
   12 layers. A layer's tables do not depend on the layers after it, so an
   N-layer model uses the first N layers' tables. The tables follow the input
-  size, not the board: `nexys/` holds the 112 x 112 tables and `opal_kelly/`
-  the 224 x 224 ones, because the GELU and exp tables are built from the
-  calibrated scales, which differ with the input size.
+  size, not the board (`input_112/`, `input_224/`), because the GELU and exp
+  tables are built from the calibrated scales, which differ with the input
+  size.
 - **Descriptors.** Entry e of the program lives in slot e mod 256 of the
   descriptor memory (the sequencer's index wraps the same way). A program of
   at most 256 entries is loaded once; a longer one phase by phase.
@@ -68,7 +68,7 @@ What makes any N work on one bitstream:
   LayerNorm constants, starts it and waits. Today every load crosses the host
   link; with external memory the loads come from DDR by DMA. The GELU, exp and
   reciprocal-square-root tables are ROMs built into the bitstream
-  (`rtl/rom/<configuration>/`).
+  (`rtl/rom/input_<size>/`).
 - **AXI wrapper** (`rtl/interface`): AXI4-Lite for control and status and a
   64-bit AXI4-Stream pair to load any memory and read a buffer out. See
   [AXI_REGISTER_MAP.md](AXI_REGISTER_MAP.md).

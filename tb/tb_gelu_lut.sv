@@ -6,7 +6,7 @@
 // The input is streamed the way the engine does it, LANES rows per cycle, row
 // tile by row tile, with valid_in dropping now and then, and every valid
 // output is compared with the golden INT8 tensor. The ROM is the one the
-// design uses, rtl/rom/opal_kelly/gelu_rom.hex.
+// design uses, rtl/rom/input_224/gelu_rom.hex.
 //
 // Vectors come from python/make_model.py --board opal_kelly --layers 2, in python/models/opal_kelly_L2:
 //   nonlinear_ops.txt  one line per op: name, kind, x file, "-", y file,

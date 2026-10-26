@@ -31,7 +31,7 @@
 //
 // Model configuration: the board "nexys" of python/make_model.py, 112 x 112
 // (50 tokens), any number of layers from 1 to 12: the pool depths below are
-// that board's (BOARDS in make_model.py), the ROM images in rtl/rom/nexys hold
+// that board's (BOARDS in make_model.py), the ROM images in rtl/rom/input_112 hold
 // the GELU and exp tables of all 12 layers. The layers and the weights come
 // from DDR at run time, so another layer count needs no new bitstream.
 //////////////////////////////////////////////////////////////////////////////////
@@ -177,9 +177,9 @@ module nexys_top_ddr #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
     ) accelerator (
         .aclk                 (CLK),
         .aresetn              (!reset),

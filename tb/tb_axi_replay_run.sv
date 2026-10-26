@@ -75,9 +75,9 @@ module tb_axi_replay_run #(
         .BUFFER_DEPTH_5 (2544),
         .BUFFER_DEPTH_6 (1344),
         .BUFFER_DEPTH_7 (16),
-        .GELU_ROM_FILE  ("../rom/nexys/gelu_rom.hex"),
-        .EXP_ROM_FILE   ("../rom/nexys/exp_rom.hex"),
-        .RSQRT_ROM_FILE ("../rom/nexys/rsqrt_rom.hex")
+        .GELU_ROM_FILE  ("../rom/input_112/gelu_rom.hex"),
+        .EXP_ROM_FILE   ("../rom/input_112/exp_rom.hex"),
+        .RSQRT_ROM_FILE ("../rom/input_112/rsqrt_rom.hex")
     ) dut (
         .aclk                 (CLK),
         .aresetn              (!reset),

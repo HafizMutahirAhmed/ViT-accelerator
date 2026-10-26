@@ -11,7 +11,7 @@
 # to the sources where they are in the repository:
 #   rtl/core/*.sv, rtl/interface/*.sv and *.v
 #   boards/nexys_a7/uart_rx.sv, uart_tx.sv, nexys_top_ddr.sv
-#   rtl/rom/nexys/*.hex                   the ROM images, as memory files
+#   rtl/rom/input_112/*.hex               the ROM images, as memory files
 #   boards/nexys_a7/nexys_a7_ddr.xdc      pins, from Digilent's master XDC
 #   boards/nexys_a7/nexys_config.xdc      configuration bank voltage
 #   boards/nexys_a7/nexys_ddr_timing.xdc  the calibration flag's synchroniser
@@ -47,7 +47,7 @@ foreach name {uart_rx.sv uart_tx.sv nexys_top_ddr.sv} {
 add_files -norecurse -fileset sources_1 $sources
 set_property file_type SystemVerilog [get_files -of_objects [get_filesets sources_1] *.sv]
 
-set roms [lsort [glob [file join $repo_dir rtl rom nexys *.hex]]]
+set roms [lsort [glob [file join $repo_dir rtl rom input_112 *.hex]]]
 add_files -norecurse -fileset sources_1 $roms
 set_property file_type {Memory File} [get_files -of_objects [get_filesets sources_1] *.hex]
 

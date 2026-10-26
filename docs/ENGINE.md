@@ -200,11 +200,10 @@ length), `activation_buffer_id` and `activation_base` (the operand),
   only after it was read. The two operands of an add must be in different
   buffers. The checks are per opcode.
 - **Tables.** The GELU, exp and reciprocal-square-root tables are ROMs loaded
-  with `$readmemh` from `rtl/rom/<board>/`, written by `python/make_model.py`:
+  with `$readmemh` from `rtl/rom/input_<size>/`, written by `python/make_model.py`:
   one GELU table per layer and one exp table per head, for all 12 layers
-  (`GELU_TABLE_COUNT` 12, `SOFTMAX_TABLE_COUNT` 36). The tables follow the
-  input size: `rtl/rom/nexys/` is for 112 x 112, `rtl/rom/opal_kelly/` for
-  224 x 224.
+  (`GELU_TABLE_COUNT` 12, `SOFTMAX_TABLE_COUNT` 36). One folder per input
+  size (112 or 224), because the tables are built from the calibrated scales.
 - **LayerNorm constants.** Gain (INT16) and offset (INT32) per column are
   written by the host: present `host_address`, `host_layernorm_write_gain`,
   `host_layernorm_write_offset` and `host_layernorm_write_enable` for one

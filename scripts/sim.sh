@@ -14,7 +14,7 @@
 # go in parallel. Testbenches name their vectors from there
 # ("../../python/vectors/..."). ROM images are named the way synthesis finds
 # them, relative to rtl/core: the engine's defaults as "rom/...", which is
-# rtl/core/rom, a link to rtl/rom/opal_kelly, and another configuration's as
+# rtl/core/rom, a link to rtl/rom/input_224, and another configuration's as
 # "../rom/<configuration>/...". sim/<snapshot>/rom and sim/rom are links that
 # make the same names work here.
 #
@@ -51,7 +51,7 @@ for g in "$@"; do
 done
 
 mkdir -p "$root/sim/$snapshot"
-ln -sfn ../../rtl/rom/opal_kelly "$root/sim/$snapshot/rom"
+ln -sfn ../../rtl/rom/input_224 "$root/sim/$snapshot/rom"
 ln -sfn ../rtl/rom "$root/sim/rom"
 cd "$root/sim/$snapshot"
 
