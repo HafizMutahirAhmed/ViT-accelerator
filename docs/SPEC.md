@@ -46,7 +46,10 @@ What makes any N work on one bitstream:
 - **Tables.** `vit_config_pkg` has room for the GELU table of every layer (12)
   and the exp table of every head (36); `rtl/rom/<board>/` holds them for all
   12 layers. A layer's tables do not depend on the layers after it, so an
-  N-layer model uses the first N layers' tables.
+  N-layer model uses the first N layers' tables. The tables follow the input
+  size, not the board: `nexys/` holds the 112 x 112 tables and `opal_kelly/`
+  the 224 x 224 ones, because the GELU and exp tables are built from the
+  calibrated scales, which differ with the input size.
 - **Descriptors.** Entry e of the program lives in slot e mod 256 of the
   descriptor memory (the sequencer's index wraps the same way). A program of
   at most 256 entries is loaded once; a longer one phase by phase.
