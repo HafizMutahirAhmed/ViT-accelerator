@@ -1,25 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: vit_axi_wrapper
-// Description: The accelerator as an AXI block: plain Verilog, so a Vivado
-// block design can take it as a module reference, with the standard port
-// names and interface attributes. Everything is in vit_axi_core.sv; the
-// register map is docs/AXI_REGISTER_MAP.md.
-//
-//   s_axi    AXI4-Lite slave, 32-bit data, 12-bit address: control, status,
-//            stream target, write windows
-//   s_axis   AXI4-Stream slave, 64-bit: load weights, biases, LayerNorm
-//            constants, descriptors or an input into the selected memory
-//   m_axis   AXI4-Stream master, 64-bit: a range of a pool buffer
-//   irq      high while done is set and IRQ_ENABLE is 1
-//   busy, done_flag, error_flag   the status bits, for LEDs
-//
-// One clock, aclk; aresetn is synchronous and active low.
-//
-// BUFFER_DEPTH_0 .. _7 are the words per bank of pool buffers 0 .. 7. The
-// three ROM files are $readmemh images named relative to rtl/core (see
-// matmul_engine); the defaults are the engine's.
-//////////////////////////////////////////////////////////////////////////////////
 
 module vit_axi_wrapper #(
     parameter integer SYS_ROW        = 8,

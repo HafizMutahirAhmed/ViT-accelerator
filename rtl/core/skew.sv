@@ -1,12 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: skew
-// Description: Input skew for the systolic array.
-//
-// Lane i is delayed by i clock cycles: lane 0 is a wire, lane i has i
-// registers. Data is passed through unchanged, DATA_WIDTH bits per lane.
-// The delay registers have no reset.
-//////////////////////////////////////////////////////////////////////////////////
 
 module skew #(
     parameter int LANE_COUNT = vit_config_pkg::SYS_ROW,

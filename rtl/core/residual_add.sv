@@ -1,24 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: residual_add
-// Description: Adds two INT8 streams that have different scales and
-// requantizes the sum to INT8, LANES values per cycle.
-//
-//   sum_out = clip((a_in * multiplier_a + b_in * multiplier_b + round) >>> shift_value)
-//   round   = 2**(shift_value - 1), or 0 when shift_value is 0
-//
-// a_in, b_in and sum_out are signed DATA_WIDTH (INT8). The multipliers are
-// signed MULTIPLIER_WIDTH (8 bits, so a positive one is 1..127) and share one
-// shift, which is arithmetic; round makes it round to nearest, ties up. The
-// products are DATA_WIDTH + MULTIPLIER_WIDTH bits and the sum is kept wide
-// enough for the largest round, so nothing wraps. clip is to -128..127.
-// Bit-exact reference: residual_add() in golden/nonlinear_ops.py.
-//
-// valid_out and sum_out follow valid_in and the operands by LATENCY cycles:
-// operand register, product register, sum register, shifted register, output
-// register. multiplier_a, multiplier_b and shift_value must be stable while
-// data is in the pipeline. Only valid is reset.
-//////////////////////////////////////////////////////////////////////////////////
 
 module residual_add #(
     parameter  int LANES            = vit_config_pkg::SYS_ROW,

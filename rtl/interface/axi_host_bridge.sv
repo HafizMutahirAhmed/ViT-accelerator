@@ -1,77 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: axi_host_bridge
-// Description: Runs the host protocol of docs/HOST_PROTOCOL.md on a byte
-// stream and turns it into AXI transactions for vit_axi_wrapper. Board
-// independent: a UART or a FrontPanel adapter only delivers and takes bytes.
-// It answers every packet with the bytes the host model in python/ answers.
-//
-// Byte stream. rx_data is taken when rx_valid and rx_ready are high, tx_data
-// is sent when tx_valid and tx_ready are high. rx_ready is low while a
-// register access or a stream beat is in progress and while a response is
-// being produced.
-//
-// What a command becomes (registers of docs/AXI_REGISTER_MAP.md):
-//   every command    read STATUS first: while the engine is busy only STATUS
-//                    and CLEAR are done, anything else is consumed and
-//                    answered with the busy status
-//   WRITE_BUFFER, WRITE_BIAS, WRITE_LAYERNORM, WRITE_DESCRIPTOR
-//                    write STREAM_TARGET and STREAM_ADDRESS, then the payload
-//                    as 64-bit beats on m_axis, first byte in TDATA[7:0]: one
-//                    beat per pool address or LayerNorm pair, four per bias
-//                    address, three per descriptor; TLAST on the packet's
-//                    last beat
-//   START            write START_INDEX, then CONTROL bit 0
-//   CLEAR            write CONTROL bit 2; clears error_flag here
-//   STATUS           read STATUS and CYCLES
-//   READ_BUFFER      write STREAM_TARGET, STREAM_ADDRESS and STORE_COUNT,
-//                    then take count beats from s_axis, 8 bytes each
-//
-// External memory, on the second AXI4-Lite master (m_system_axi, 32-bit
-// address): an AXI DMA's registers at DMA_BASE_ADDRESS and the DDR at
-// DDR_BASE_ADDRESS. The three commands need memory_ready (the memory
-// controller is calibrated); without it they are answered with the memory
-// status and a write's payload is consumed and dropped.
-//   WRITE_DDR        each 8-byte item is two 32-bit writes at DDR_BASE_ADDRESS
-//                    + 8 * (address + item), low word first. The engine may run
-//   READ_DDR         two 32-bit reads per item, the same addresses
-//   DMA_LOAD         one 8-byte item: DDR byte offset, then length in bytes,
-//                    32 bits each. Target bits 2:0 are the pool buffer id,
-//                    bits 5:4 the STREAM_TARGET kind. After the checksum:
-//                    write STREAM_TARGET and STREAM_ADDRESS, then the DMA's
-//                    MM2S_DMACR = 1 (run), MM2S_SA and MM2S_LENGTH, then read
-//                    MM2S_DMASR until it is idle and dma_stream_last has
-//                    been seen (the stream's last beat reached the wrapper),
-//                    or an error bit (4..6) is set, or DMA_TIMEOUT_CYCLES pass.
-//                    dma_stream_select is high from the first register write
-//                    to the response: the wrapper's s_axis then takes the
-//                    DMA's stream instead of m_axis
-//   RUN              runs `count` entries of the run list at DDR item `address`
-//                    (8-byte items; an entry is 16 bytes, four 32-bit words).
-//                    Per entry: four 32-bit reads on m_system_axi, then by the
-//                    kind in word 0 bits 7:0
-//                      1 LOAD   the DMA_LOAD sequence above, with target =
-//                               word 0 bits 15:8, address = word 1, DDR
-//                               offset = word 2, length = word 3
-//                      2 START  write START_INDEX = word 1 and CONTROL bit 0,
-//                               read STATUS until done (bit 1), then CYCLES,
-//                               added to the run's total
-//                    any other kind, the engine's error bit, an error response
-//                    from the wrapper or PHASE_TIMEOUT_CYCLES without done
-//                    stop the run with the run status bit; an error on
-//                    m_system_axi, a DMA error or timeout with the memory
-//                    bit. The response payload is the total busy cycles, 4
-//                    bytes. dma_stream_select is high for the whole run
-// The memory status bit also reports an error response on m_system_axi, a
-// DMA error and a DMA timeout. STATUS flag bit 3 is memory_ready.
-//
-// The AXI4-Lite masters do one access at a time, on one of the two ports:
-// AWVALID and WVALID together, each held until taken, then the response.
-// error_flag is sticky: set by any response with a non-zero status, cleared
-// by CLEAR. No arithmetic on the data: bytes are moved, never changed.
-// The inputs of m_system_axi, memory_ready and dma_stream_last default to
-// zero, so a board without external memory leaves them unconnected.
-//////////////////////////////////////////////////////////////////////////////////
 
 module axi_host_bridge #(
     parameter int          LITE_ADDRESS_WIDTH = 12,
@@ -309,10 +236,8 @@ module axi_host_bridge #(
     assign m_axis_tkeep  = '1;
     assign m_axi_wstrb   = '1;
 
-    // ------------------------------------------------------------------
     // AXI4-Lite masters: one access at a time, on m_axi (the wrapper) or
     // on m_system_axi (DMA registers and DDR)
-    // ------------------------------------------------------------------
     logic        lite_request;       // one cycle: start the access below
     logic        lite_write;
     logic        lite_system;        // the access goes to m_system_axi

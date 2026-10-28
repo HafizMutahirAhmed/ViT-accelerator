@@ -1,26 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: pe
-// Description: Output-stationary processing element, one DSP48E1.
-//
-// The accumulator stays in the PE. The activation passes left to right, the
-// weight passes top to bottom and the first_k flag travels with them, each
-// through one register.
-//
-// Fixed point: activation and weight are signed DATA_WIDTH integers, the
-// accumulator is a signed ACC_WIDTH integer that wraps modulo 2**ACC_WIDTH.
-// The product is exact in 2*DATA_WIDTH bits, so ACC_WIDTH >= 2*DATA_WIDTH.
-//
-// The multiply-accumulate is pipelined to fit the DSP48E1 registers: operand
-// registers (A, B), product register (M) and the accumulator (P). The operands
-// seen in one cycle reach the accumulator vit_config_pkg::DSP_LATENCY + 1 = 3
-// clock edges later. first_k is delayed alongside and selects, in the DSP's Z
-// multiplexer, whether the product is added to the accumulator or to zero.
-//
-// No register has a reset. first_k_in loads the accumulator with the first
-// product of a new output tile, which replaces a clear, and zero operands
-// leave it unchanged.
-//////////////////////////////////////////////////////////////////////////////////
 
 (* use_dsp = "yes" *)
 module pe #(

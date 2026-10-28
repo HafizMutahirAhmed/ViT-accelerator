@@ -1,48 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: vit_axi_core
-// Description: matmul_engine behind an AXI4-Lite slave and an AXI4-Stream
-// pair. vit_axi_wrapper.v is the plain-Verilog top with the standard port
-// names; docs/AXI_REGISTER_MAP.md is the register map.
-//
-// AXI4-Lite (32-bit data): control and status registers, the stream target
-// and address, and three write windows (one descriptor, one bias address, one
-// LayerNorm address) for small writes. A write is taken when AWVALID and
-// WVALID are both high; WSTRB is ignored (every register is written whole).
-//
-// s_axis (64-bit): bulk load. One item goes to the address in STREAM_ADDRESS
-// of the memory selected by STREAM_TARGET, and the address advances by one:
-//   pool buffer   1 beat    one byte per bank, bank 0 in TDATA[7:0]
-//   bias store    4 beats   8 INT32, bank 0 in beat 0 [31:0]
-//   LayerNorm     1 beat    gain in [15:0], offset in [47:16]
-//   descriptor    3 beats   160 bits, word 0 in beat 0 [31:0]
-// TKEEP is ignored. TLAST only matters as a check: a TLAST inside an item
-// drops that item and sets the error flag. TREADY is low while the engine
-// runs, while a store is active, while a start is pending, for the cycles
-// a descriptor takes to write (5) and in a cycle with a register write. Pool,
-// bias and LayerNorm items are taken back to back, one beat per cycle.
-//
-// m_axis (64-bit): bulk store. Writing N to STORE_COUNT sends N addresses of
-// the selected pool buffer from STREAM_ADDRESS on, one beat each, TLAST on the
-// last. The engine's read data cannot be stalled, so addresses are only
-// issued while the output FIFO has room for everything in flight.
-//
-// The engine's rules are kept: its host port is only driven while it is idle,
-// one write per cycle, and start is given one cycle after the last write.
-// A window write, a start or a store requested while the engine runs gets
-// SLVERR and sets the error flag. irq is high while done is set and
-// IRQ_ENABLE is 1.
-//
-// Soft reset (CONTROL bit 1) holds the engine's reset for RESET_CYCLES clocks:
-// the sequencer returns to idle, an item or a store in progress is dropped
-// (m_axis TVALID falls without a handshake, so reset the receiver as well),
-// the output FIFO is emptied and done, error and the cycle counter are
-// cleared. The registers (START_INDEX, IRQ_ENABLE, STREAM_TARGET,
-// STREAM_ADDRESS) and every memory (descriptors, buffers, biases, LayerNorm
-// constants) keep their contents.
-//
-// aresetn is synchronous, active low. No arithmetic on data.
-//////////////////////////////////////////////////////////////////////////////////
 
 module vit_axi_core #(
     parameter  int SYS_ROW    = vit_config_pkg::SYS_ROW,
@@ -155,9 +111,7 @@ module vit_axi_core #(
         engine_reset <= reset || soft_reset;
     end
 
-    // ------------------------------------------------------------------
     // engine
-    // ------------------------------------------------------------------
     logic                              start;
     logic [DESCRIPTOR_INDEX_WIDTH-1:0] start_index;
     logic                              done;
@@ -205,9 +159,7 @@ module vit_axi_core #(
         .host_layernorm_write_offset  (host_layernorm_write_offset)
     );
 
-    // ------------------------------------------------------------------
     // registers
-    // ------------------------------------------------------------------
     logic [DESCRIPTOR_INDEX_WIDTH-1:0] start_index_reg;
     logic                              irq_enable;
     logic [BUFFER_ID_WIDTH-1:0]        target_buffer;
@@ -385,9 +337,7 @@ module vit_axi_core #(
         end
     end
 
-    // ------------------------------------------------------------------
     // requests to the item writer: a stream item or a window commit
-    // ------------------------------------------------------------------
     assign load_fire      = s_axis_tvalid && s_axis_tready;
     assign load_last_beat = beat_index == beats_minus_one;
 
@@ -463,9 +413,7 @@ module vit_axi_core #(
         end
     end
 
-    // ------------------------------------------------------------------
     // item writer, start, store address issue: the engine's host port
-    // ------------------------------------------------------------------
     logic [ITEM_WIDTH-1:0] writing_item;
     logic [1:0]            writing_kind;
 
@@ -583,9 +531,7 @@ module vit_axi_core #(
         end
     end
 
-    // ------------------------------------------------------------------
     // status flags and the cycle counter
-    // ------------------------------------------------------------------
     always_ff @(posedge aclk) begin
         if (reset || soft_reset) begin
             done_flag  <= 1'b0;

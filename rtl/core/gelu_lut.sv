@@ -1,26 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: gelu_lut
-// Description: GELU by table lookup, LANES values per cycle.
-//
-//   y_out = table[table_select][x_in]
-//
-// x_in and y_out are signed DATA_WIDTH (INT8). A table has one entry per input
-// value, addressed by the input's two's complement bits:
-//   entry[x] = clip(round(gelu(x * input scale) / output scale))
-// so the table carries both scales and the result is exact for an INT8 input.
-// There are TABLE_COUNT tables, one per GELU of the model (encoder layer 0,
-// encoder layer 1), back to back in one ROM: address = table_select * 256 + x.
-// Bit-exact reference: gelu() and gelu_table() in golden/nonlinear_ops.py.
-//
-// The ROM is loaded from ROM_FILE with $readmemh, one entry per line; the
-// file is written by golden/gen_deit_forward.py. Lanes are served in pairs
-// by the two read ports of one copy of the ROM.
-//
-// valid_out and y_out follow valid_in and x_in by LATENCY cycles: address
-// register, ROM read, output register. table_select must be stable while data
-// is in the pipeline. Only valid is reset.
-//////////////////////////////////////////////////////////////////////////////////
 
 module gelu_lut #(
     parameter  int    LANES       = vit_config_pkg::SYS_ROW,

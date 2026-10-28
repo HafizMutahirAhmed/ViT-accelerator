@@ -1,35 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 10/09/2026 05:53:44 AM
-// Design Name: 
-// Module Name: requantize
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-// Fixed point: out = clip((unquantized_result * scale) >>> shift_value).
-// unquantized_result is a signed ACC_WIDTH integer and scale a signed
-// SCALE_WIDTH integer; the product keeps all ACC_WIDTH + SCALE_WIDTH bits. The
-// shift is arithmetic (floor, no rounding offset) and the result saturates to
-// a signed DATA_WIDTH integer.
-//
-// The datapath is pipelined for the DSP48E1 registers: operand registers, the
-// product register, a second product register and a register on the shifted
-// value. The clip after it is combinational. quantized_result and valid_out
-// come vit_config_pkg::REQUANTIZE_LATENCY = 4 cycles after the inputs and
-// valid_in. shift_value is sampled one cycle before the shift and is expected
-// to be constant while results are in flight.
 
 (* use_dsp = "yes" *)
 module requantize #(

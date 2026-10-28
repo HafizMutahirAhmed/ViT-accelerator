@@ -1,26 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: accelerator_system
-// Description: The accelerator as a board with external memory sees it:
-// axi_host_bridge, vit_axi_wrapper and the stream multiplexer in front of the
-// wrapper's s_axis. Board independent; the board adds the byte transport, the
-// clocks and resets, and the memory system (memory controller, AXI DMA,
-// interconnect), which it reaches through two ports:
-//
-//   m_system_axi  AXI4-Lite master, 32-bit address and data: the bridge's
-//                 accesses to the DMA registers (DMA_BASE_ADDRESS) and to the
-//                 DDR (DDR_BASE_ADDRESS)
-//   s_axis_dma    AXI4-Stream slave, 64-bit: the DMA's MM2S stream. While the
-//                 bridge runs a DMA_LOAD (dma_stream_select) it goes to the
-//                 wrapper's s_axis and the bridge's own load stream is held;
-//                 otherwise the bridge's stream goes there and s_axis_dma is
-//                 not ready. The select only changes between packets.
-//   memory_ready  the memory controller is calibrated; synchronous to aclk
-//
-// The host protocol is docs/HOST_PROTOCOL.md. Data is moved, never changed:
-// 8-bit bytes, 64-bit beats. One clock, aclk; aresetn is synchronous, active
-// low. BUFFER_DEPTH_0 .. _7 and the ROM files are vit_axi_wrapper's.
-//////////////////////////////////////////////////////////////////////////////////
 
 module accelerator_system #(
     parameter int          SYS_ROW          = 8,
@@ -101,9 +79,7 @@ module accelerator_system #(
 
     assign error_flag = bridge_error || wrapper_error;
 
-    // ------------------------------------------------------------------
     // the wrapper's load stream: the bridge's, or the DMA's during DMA_LOAD
-    // ------------------------------------------------------------------
     assign load_tdata         = dma_stream_select ? s_axis_dma_tdata  : bridge_load_tdata;
     assign load_tkeep         = dma_stream_select ? s_axis_dma_tkeep  : bridge_load_tkeep;
     assign load_tlast         = dma_stream_select ? s_axis_dma_tlast  : bridge_load_tlast;

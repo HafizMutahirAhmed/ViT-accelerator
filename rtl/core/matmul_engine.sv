@@ -1,63 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: matmul_engine
-// Description: Runs a table of matmul ops on the systolic array.
-//
-// Contents: the descriptor memory and register bank, the sequencer, a pool of
-// BUFFER_COUNT operand buffers, the bias store, matmul_stream_controller,
-// systolic_array and drain (with its requantizers).
-//
-// One op is a descriptor_t (see vit_config_pkg). For an OPCODE_MATMUL op the
-// engine computes, in INT8 with INT32 accumulation,
-//   output = clip(((activation @ weight + bias) * scale) >>> shift)
-// reading the activation operand from the row banks of buffer
-// activation_buffer_id, the weight operand from the column banks of buffer
-// weight_buffer_id and writing the result to buffer output_buffer_id in the
-// layout picked by drain_mode. An op's output buffer is used by a later op
-// simply by naming its id: nothing is copied. The three ids of an op must
-// differ, because a buffer has one read port and one write port.
-//
-// Row ops (OPCODE_ADD, OPCODE_GELU, OPCODE_LAYERNORM, OPCODE_SOFTMAX; see vit_config_pkg) work on tensors in row banks, SYS_ROW
-// rows at a time. row_op_reader issues the read addresses, the op's datapath
-// processes the read data and row_op_writer writes the result. A row op may
-// write to the buffer it reads (in place): a word is written only after it
-// was read. The two operands of an add must be in different buffers. Row ops
-// reach the pool through registers of their own: a read address register per
-// buffer, read data registers and a result register.
-//
-// Any other opcode is skipped.
-//
-// Pool buffers have max(SYS_ROW, SYS_COL) banks; the activation side uses the
-// first SYS_ROW of them and the weight side the first SYS_COL. BUFFER_DEPTH
-// gives the words per bank of each buffer, 32 bits per buffer, buffer 0 in the
-// low bits. Array inputs are the buffer read data where the controller's lane
-// enable is high and zero elsewhere, registered once together with first_k.
-//
-// Sequencer: start reads descriptor start_index from the memory, moves it
-// through a fetch register into the register bank (so every field the
-// datapath uses comes from a plain register, not a memory output), runs
-// the op, waits for the last tile and for the drain to finish, then goes on
-// to the next descriptor, or stops and pulses done when last_op is set. The
-// register bank holds every field stable for the whole op.
-//
-// Host port. While busy is low the host can write and read the pool
-// (host_buffer_id, host_address, one write enable per bank), the bias store
-// (host_address, one write enable per column bank), the LayerNorm constants
-// (host_address, gain and offset of one column per write) and the descriptor memory
-// (host_descriptor_index, one write enable per 32-bit word, word 0 least
-// significant). Every host write is registered once after the busy gate, so
-// it lands one cycle (vit_config_pkg::POOL_WRITE_LATENCY for the pool) after
-// it is presented. Read data is valid vit_config_pkg::BUFFER_READ_LATENCY cycles
-// after the address. While busy is high host writes are ignored and the read
-// data is not meaningful.
-//
-// GELU_ROM_FILE, EXP_ROM_FILE and RSQRT_ROM_FILE name the $readmemh images of
-// the row ops' tables, relative to rtl/. The defaults are the tables of the
-// 224 x 224 model; another model configuration passes its own.
-//
-// The descriptor field widths, BUFFER_COUNT, BIAS_DEPTH and DESCRIPTOR_COUNT
-// come from vit_config_pkg and cannot be overridden per instance.
-//////////////////////////////////////////////////////////////////////////////////
 
 module matmul_engine #(
     parameter  int SYS_ROW    = vit_config_pkg::SYS_ROW,
@@ -126,9 +67,7 @@ module matmul_engine #(
     localparam int ROWS_WIDTH              = vit_config_pkg::ROWS_WIDTH;
     localparam int COLS_WIDTH              = vit_config_pkg::COLS_WIDTH;
 
-    // ------------------------------------------------------------------
     // descriptor memory: one 32-bit wide RAM per descriptor word
-    // ------------------------------------------------------------------
     logic [DESCRIPTOR_INDEX_WIDTH-1:0]  descriptor_index;
     logic [DESCRIPTOR_MEMORY_WIDTH-1:0] descriptor_read_data;
 
@@ -162,9 +101,7 @@ module matmul_engine #(
         end
     endgenerate
 
-    // ------------------------------------------------------------------
     // sequencer and descriptor register bank
-    // ------------------------------------------------------------------
     typedef enum logic [2:0] {
         STATE_IDLE,
         STATE_FETCH,   // descriptor memory read
@@ -284,9 +221,7 @@ module matmul_engine #(
         end
     end
 
-    // ------------------------------------------------------------------
     // stream controller
-    // ------------------------------------------------------------------
     logic [ADDRESS_WIDTH-1:0] activation_read_address;
     logic [ADDRESS_WIDTH-1:0] weight_read_address;
     logic [SYS_ROW-1:0]       activation_lane_enable;
@@ -324,9 +259,7 @@ module matmul_engine #(
         .all_tiles_done          (all_tiles_done)
     );
 
-    // ------------------------------------------------------------------
     // row ops: reader, datapath, writer
-    // ------------------------------------------------------------------
     localparam int ROW_OP_PASS_WIDTH = vit_config_pkg::ROW_OP_PASS_WIDTH;
 
     logic [ADDRESS_WIDTH-1:0]                  row_read_address_a;
@@ -524,9 +457,7 @@ module matmul_engine #(
         .done          (row_op_done)
     );
 
-    // ------------------------------------------------------------------
     // buffer pool
-    // ------------------------------------------------------------------
     logic [LANES-1:0]                                   drain_write_enable;
     logic [ADDRESS_WIDTH-1:0]                           drain_write_address;
     logic signed [LANES-1:0][DATA_WIDTH-1:0]            drain_write_data;
@@ -637,9 +568,7 @@ module matmul_engine #(
 
     assign host_buffer_read_data = pool_read_data[host_buffer_id];
 
-    // ------------------------------------------------------------------
     // bias store: column bank c holds bias[c], bias[c + SYS_COL], ...
-    // ------------------------------------------------------------------
     logic [BIAS_ADDRESS_WIDTH-1:0]      bias_address;
     logic [BIAS_ADDRESS_WIDTH-1:0]      bias_read_address_reg;
     logic [SYS_COL-1:0][ACC_WIDTH-1:0]  bias_read_data;
@@ -683,9 +612,7 @@ module matmul_engine #(
 
     assign host_bias_read_data = bias_read_data;
 
-    // ------------------------------------------------------------------
     // lane masking and the array
-    // ------------------------------------------------------------------
     logic signed [SYS_ROW-1:0][DATA_WIDTH-1:0]             activation_in;
     logic signed [SYS_COL-1:0][DATA_WIDTH-1:0]             weight_in;
     logic                                                  first_k_array;
@@ -715,9 +642,7 @@ module matmul_engine #(
         .accumulator_out (accumulator_out)
     );
 
-    // ------------------------------------------------------------------
     // drain
-    // ------------------------------------------------------------------
     drain #(
         .SYS_ROW    (SYS_ROW),
         .SYS_COL    (SYS_COL),

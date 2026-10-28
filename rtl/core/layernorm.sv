@@ -1,44 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: layernorm
-// Description: LayerNorm over each row of a tensor, LANES rows at a time.
-//
-// The row is streamed twice (row_op_reader with two passes). With n the row
-// length and x the INT8 elements of one row:
-//
-//   pass 0, statistics:
-//     total    = sum(x)                          signed 16 bits
-//     squares  = sum(x * x)                      unsigned 22 bits
-//   between the passes:
-//     variance = n * squares - total * total + epsilon, at least 1
-//                unsigned 30 bits; it is n^2 times the variance of x
-//     variance = m * 4**e with m in [1, 4);  r = rsqrt_rom[top 8 bits of m]
-//                r = round(2**12 / sqrt(m)), 13 bits unsigned
-//   pass 1, output, for column c:
-//     centred  = n * x - total                   signed 18 bits, n * (x - mean)
-//     norm     = (centred * r) >>> (4 + e)       (x - mean) / std with 8 fraction bits
-//     y        = clip((norm * gain[c] + offset[c]) >>> out_shift)
-//
-// so there is no division: centred / sqrt(variance) = (x - mean) / std. Both
-// shifts are arithmetic (floor); the half LSB that rounds the last one is
-// part of offset. gain is signed 16 bits and offset signed 32 bits, one pair
-// per column, read from the constants memory at constants_base + c. The host
-// writes that memory through the constants_write port. Bit-exact reference:
-// layernorm() in golden/nonlinear_ops.py with the lut256/r12/n8/g16 precision.
-//
-// Limits: n * n * 2**14 must be below 2**30, so n <= 255 (it is 192), which
-// also keeps |x - mean| / std below 16. n must be larger than the read
-// latency of the stream, so that pass_ready has dropped before the reader
-// waits for it.
-//
-// Stream. valid_in, pass_in, first_in (first column), last_in (last column)
-// and x_in come from row_op_reader and the pool. pass_ready goes high when
-// the statistics of the tile are ready and stays high until the next pass 0
-// starts. valid_out and y_out follow a pass 1 input by LATENCY cycles.
-// row_length, constants_base, out_shift and epsilon must be stable during an
-// op. The reciprocal square root ROM is loaded from ROM_FILE with $readmemh
-// (written by golden/gen_deit_forward.py). Only control registers are reset.
-//////////////////////////////////////////////////////////////////////////////////
 
 module layernorm #(
     parameter  int    LANES          = vit_config_pkg::SYS_ROW,
@@ -103,9 +63,7 @@ module layernorm #(
     localparam logic signed [SCALED_WIDTH-1:0] DATA_MAX = (SCALED_WIDTH'(1) << (DATA_WIDTH - 1)) - 1;
     localparam logic signed [SCALED_WIDTH-1:0] DATA_MIN = -(SCALED_WIDTH'(1) << (DATA_WIDTH - 1));
 
-    // ------------------------------------------------------------------
     // control: flags travelling with the data
-    // ------------------------------------------------------------------
     logic [LATENCY-1:0]                                     output_valid_pipeline;
     logic [ACCUMULATE_STAGES-1:0]                           statistics_valid_pipeline;
     logic [ACCUMULATE_STAGES-1:0]                           statistics_first_pipeline;
@@ -138,9 +96,7 @@ module layernorm #(
 
     assign valid_out = output_valid_pipeline[LATENCY-1];
 
-    // ------------------------------------------------------------------
     // constants memory: gain and offset per column, one read for all lanes
-    // ------------------------------------------------------------------
     logic [GAIN_WIDTH+OFFSET_WIDTH-1:0] constants_memory[CONSTANT_DEPTH];
     logic [CONSTANT_ADDRESS_WIDTH-1:0]  constants_address;      // stage 1
     logic [GAIN_WIDTH+OFFSET_WIDTH-1:0] constants_read;         // stage 2
@@ -161,9 +117,7 @@ module layernorm #(
         offset_pipeline <= {offset_pipeline[1:0], constants_out[GAIN_WIDTH +: OFFSET_WIDTH]};
     end
 
-    // ------------------------------------------------------------------
     // one datapath per lane
-    // ------------------------------------------------------------------
     logic signed [LENGTH_WIDTH:0] length_signed;
 
     assign length_signed = $signed({1'b0, row_length});

@@ -1,39 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: matmul_stream_controller
-// Description: Streams a tiled (M x K) @ (K x N) matmul from the operand
-// buffers into the systolic array.
-//
-// Tiles are visited row tile outer, column tile inner. For every tile the
-// controller reads k = 0 .. inner_dim-1 from both buffers, then idles for
-// PIPELINE_LATENCY cycles so the array is fed zeros, then pulses tile_done.
-//   activation_read_address = activation_base + tile_row * inner_dim + k
-//   weight_read_address     = weight_base     + tile_col * inner_dim + k
-//
-// Outputs come in two timing groups:
-//   - the read addresses, in the cycle the buffers are addressed;
-//   - activation_lane_enable, weight_lane_enable and first_k_out, READ_LATENCY
-//     cycles later, lined up with the buffer read data.
-// The array input for a lane is its read data when the lane enable is high
-// and zero otherwise. A lane enable is low outside the k stream and for lanes
-// past the matrix edge (global row >= rows_total, global col >= cols_total),
-// which is what makes ragged edge tiles work.
-//
-// ARRAY_INPUT_LATENCY is the number of register stages the user puts between
-// the masked read data (and first_k_out) and the array inputs.
-//
-// tile_done is high for one cycle, in the first cycle where every accumulator
-// of the tile is final. tile_row and tile_col give that tile's coordinates in
-// the same cycle. The next tile's first slice reaches the array inputs in that
-// cycle too; see the timing contract in drain.sv. all_tiles_done pulses
-// together with the last tile_done.
-//
-// start is ignored while a matmul is running. rows_total, inner_dim,
-// cols_total, row_tiles, col_tiles and both bases must hold from start until
-// all_tiles_done, with inner_dim >= 1, row_tiles = ceil(rows_total / SYS_ROW)
-// and col_tiles = ceil(cols_total / SYS_COL). Control data only, no arithmetic
-// on operands.
-//////////////////////////////////////////////////////////////////////////////////
 
 module matmul_stream_controller #(
     parameter  int SYS_ROW        = vit_config_pkg::SYS_ROW,

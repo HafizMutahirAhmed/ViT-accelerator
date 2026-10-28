@@ -1,24 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: row_op_writer
-// Description: Write-side sequencer of the row ops.
-//
-// Takes the result stream of a row op datapath, LANES values per cycle in the
-// order the reader walked the tensor (row tile by row tile, column by column),
-// and writes it to row banks:
-//   write_address = output_base + tile * output_stride + column
-// Lane `lane` is written only when it holds a row below rows_total.
-//
-// write_enable, write_address and write_data are registered: they follow
-// result_valid by one cycle. done pulses for one cycle DONE_DELAY cycles after
-// the last write leaves this module, so the write has reached the memory
-// before the engine moves on; DONE_DELAY must cover the registers between
-// this module and the memory.
-//
-// start clears the position; it must come before the first result_valid.
-// rows_total, row_length, row_tiles, output_base and output_stride must hold
-// from start until done. Data is DATA_WIDTH bits and is not changed.
-//////////////////////////////////////////////////////////////////////////////////
 
 module row_op_writer #(
     parameter  int LANES          = vit_config_pkg::SYS_ROW,

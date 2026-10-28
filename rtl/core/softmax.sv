@@ -1,38 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: softmax
-// Description: Softmax over each row of a tensor of scores, LANES rows at a
-// time, with the result as 0..127 so the engine can use it as an INT8 operand.
-//
-// The row is streamed three times (row_op_reader with three passes). With s
-// the INT8 scores of one row:
-//
-//   pass 0:  peak     = max(s)
-//   pass 1:  distance = peak - s[j]             0 .. 255
-//            e[j]     = exp_rom[table_select][distance]     unsigned 12 bits
-//            total    = sum(e)                  unsigned 20 bits
-//   then:    quotient = floor(127 * 2**22 / total)          one division, 18 bits
-//   pass 2:  p[j]     = min(127, (e[j] * quotient + 2**21) >> 22)
-//
-// exp_rom entry d of a table is round(4095 * exp(-d * score scale)), so the
-// table carries the scale of the scores; there is one table per attention
-// head and layer, back to back in one ROM: address = table_select * 256 + d.
-// The largest score has distance 0 and entry 4095, so total is at least 4095
-// and the quotient fits 18 bits. The division is a restoring divider, one
-// numerator bit per cycle. Bit-exact reference: softmax() in
-// golden/nonlinear_ops.py with the exp12/divide precision.
-//
-// Stream. valid_in, pass_in, first_in (first column), last_in (last column)
-// and score_in come from row_op_reader and the pool. pass_ready goes high
-// when what the next pass needs is ready (the peak after pass 0, the quotient
-// after pass 1) and drops when pass 0 or pass 1 data arrives. valid_out and
-// p_out follow a pass 2 input by LATENCY cycles. table_select must be stable
-// during an op. The row must be longer than the read latency of the stream,
-// so that pass_ready has dropped before the reader waits for it. The ROM is
-// loaded from ROM_FILE with $readmemh (written by
-// golden/gen_deit_forward.py); lanes are served in pairs by the two read
-// ports of one copy. Only control registers are reset.
-//////////////////////////////////////////////////////////////////////////////////
 
 module softmax #(
     parameter  int    LANES        = vit_config_pkg::SYS_ROW,
@@ -75,9 +41,7 @@ module softmax #(
     localparam int PEAK_STAGES  = 2;
     localparam int TOTAL_STAGES = 5;
 
-    // ------------------------------------------------------------------
     // control: flags travelling with the data, the divider steps, pass_ready
-    // ------------------------------------------------------------------
     logic [LATENCY-1:0]      output_valid_pipeline;
     logic [PEAK_STAGES-1:0]  peak_valid_pipeline;
     logic [PEAK_STAGES-1:0]  peak_first_pipeline;
@@ -138,9 +102,7 @@ module softmax #(
 
     assign valid_out = output_valid_pipeline[LATENCY-1];
 
-    // ------------------------------------------------------------------
     // per lane: peak, distance, total, divider, output
-    // ------------------------------------------------------------------
     logic [LANES-1:0][DATA_WIDTH-1:0] distance;     // stage 2
     logic [LANES-1:0][EXP_BITS-1:0]   entry;        // stage 4
 
@@ -215,9 +177,7 @@ module softmax #(
         end
     endgenerate
 
-    // ------------------------------------------------------------------
     // exp ROM: one copy per pair of lanes, read (stage 3), output register (stage 4)
-    // ------------------------------------------------------------------
     genvar pair;
     generate
         for (pair = 0; pair < PAIRS; pair++) begin: lane_pair

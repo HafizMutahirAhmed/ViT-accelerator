@@ -1,33 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: row_op_reader
-// Description: Read-side sequencer of the row ops (residual add, GELU,
-// LayerNorm, softmax).
-//
-// A row op works on a rows_total x row_length tensor stored in row banks: bank
-// `lane` holds rows lane, lane + LANES, ... and row tile t (rows t*LANES ..
-// t*LANES + LANES - 1) starts at base + t * row_length. One read address
-// therefore delivers the same element of LANES rows.
-//
-// For each row tile the reader makes passes + 1 passes over the row_length
-// addresses of the tile, on both operands at once:
-//   read_address_a = base_a + tile * row_length + column
-//   read_address_b = base_b + tile * row_length + column
-// After a pass that is not the last one of the tile it waits until pass_ready
-// is high, which is how a datapath takes time between passes. After the last
-// pass it goes straight on to the next tile.
-//
-// Outputs come in two timing groups:
-//   - the read addresses, registered, in the cycle the buffers are addressed;
-//   - data_valid, data_pass, data_first (column 0), data_last (column
-//     row_length - 1) and data_lane_valid (lane holds a row below rows_total),
-//     DATA_LATENCY cycles later, lined up with the read data at the datapath.
-//
-// start is ignored while running. rows_total, row_length, row_tiles, passes
-// and both bases must hold from start until the last data_last, with
-// row_tiles = ceil(rows_total / LANES) and row_length >= 1. Control only, no
-// arithmetic on data.
-//////////////////////////////////////////////////////////////////////////////////
 
 module row_op_reader #(
     parameter  int LANES          = vit_config_pkg::SYS_ROW,

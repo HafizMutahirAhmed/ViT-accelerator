@@ -1,23 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: systolic_array
-// Description: Output-stationary SYS_ROW x SYS_COL systolic array.
-//
-// Computes one output tile: accumulator_out[row][col] = sum over k of
-// activation[row][k] * weight[k][col], signed DATA_WIDTH operands, signed
-// ACC_WIDTH result that wraps modulo 2**ACC_WIDTH.
-//
-// Each cycle the caller presents one k slice, unskewed: activation_in[row] and
-// weight_in[col], with first_k_in high on the first slice of a tile. The skew
-// modules delay row i by i cycles and column j by j cycles, so pe(row, col)
-// sees slice k at cycle k + row + col. first_k travels down column 0 and along
-// every row, which gives it the same row + col delay. Inside the pe the
-// operands take DSP_LATENCY more cycles to reach the accumulator.
-//
-// After the last slice, feed zeros with first_k_in low for PIPELINE_LATENCY
-// cycles; all accumulators are then final and hold while zeros keep coming.
-// There is no reset: first_k_in starts every tile.
-//////////////////////////////////////////////////////////////////////////////////
 
 module systolic_array #(
     parameter int SYS_ROW    = vit_config_pkg::SYS_ROW,

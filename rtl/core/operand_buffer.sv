@@ -1,21 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: operand_buffer
-// Description: Banked operand store that feeds one side of the systolic array.
-//
-// There are SYS_LANES banks, one per array lane. Bank `lane` holds operand
-// rows lane, lane + SYS_LANES, lane + 2*SYS_LANES, ... and each row is stored
-// contiguous along K, so row (tile_index*SYS_LANES + lane), element k is at
-// address tile_index*K + k of bank `lane`. For the weight buffer a "row" is a
-// column of B.
-//
-// Each bank has its own write port. All banks share one read address and the
-// read data is registered: read_data is valid READ_LATENCY cycles after
-// read_address. Stage 1 is the block RAM read, stage 2 its output register and
-// any further stage sits after the multiplexer that joins the block RAMs of a
-// deep bank. A read of an address written in the same cycle returns the old
-// word. Data is DATA_WIDTH bits, stored unchanged. There is no reset.
-//////////////////////////////////////////////////////////////////////////////////
 
 module operand_buffer #(
     parameter  int SYS_LANES     = vit_config_pkg::SYS_ROW,
