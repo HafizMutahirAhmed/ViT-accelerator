@@ -387,12 +387,6 @@ Cosine similarity between the INT8 model and FP32, measured on 20 images
 
 - MNIST inputs are not natural images, so the numbers above may differ for the
   real use case. Calibrate on images from the target task.
-- `rtl/core/rom` is a symbolic link to `rtl/rom/input_224`, the default ROM
-  file names of the engine's modules. Nothing in the project or the testbenches
-  uses it (they name their ROM files), so it does no harm where symbolic links
-  do not survive, as on Windows.
-- Some comments in `rtl/core` still name `golden/gen_deit_forward.py`, which
-  is now `python/golden_model.py`.
 
 ---
 

@@ -32,6 +32,8 @@ stage=$work/ViT-implementation
 mkdir -p "$stage"
 git -C "$root" archive HEAD | tar -x -C "$stage"
 rm -rf "$stage/scripts" "$stage/CLAUDE.md" "$stage/.gitignore"
+# rtl/core/rom links to rtl/rom/input_224 for the modules' default ROM names; every user names its own.
+rm -f "$stage/rtl/core/rom"
 
 mkdir -p "$stage/python/models" "$stage/python/mnist/MNIST/raw" "$stage/bitstream" "$stage/test_results"
 cp -r "$root/python/vectors" "$stage/python/"
