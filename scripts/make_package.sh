@@ -10,6 +10,8 @@
 #   nexys_top_ddr.bit                Generate Bitstream of vivado/vit.xpr
 #   build.txt                        "WNS <ns> WHS <ns>" of that build
 #   timing_summary.txt, utilization.txt
+#   commit.txt                       optional: the commit the check ran on, when HEAD is a later one;
+#                                    the summary then names it and the commits since
 # The default zip is ../ViT-implementation-<commit>.zip. The tree is HEAD, so commit first.
 set -euo pipefail
 
@@ -46,9 +48,12 @@ cp "$results"/*.log "$results/timing_summary.txt" "$results/utilization.txt" "$s
 # The check ran in a temporary copy; the logs name files relative to the project folder instead.
 sed -i -E -e 's#/[^ "]*/ViT-implementation/##g' -e 's#-file /[^ ]*/#-file #' "$stage"/test_results/*
 
-python3 - "$results" "$stage/test_results/SUMMARY.md" "$commit" <<'EOF'
+tested=$commit
+[ -f "$results/commit.txt" ] && tested=$(git -C "$root" rev-parse --short "$(tr -d '[:space:]' < "$results/commit.txt")")
+since=$(git -C "$root" log --format='%h %s' "$tested..HEAD")
+python3 - "$results" "$stage/test_results/SUMMARY.md" "$tested" "$commit" "$since" <<'EOF'
 import datetime, os, re, sys
-results, out, commit = sys.argv[1:4]
+results, out, tested, commit, since = sys.argv[1:6]
 rows = [line.rstrip("\n").split("\t") for line in open(os.path.join(results, "results.txt")) if line.strip()]
 passed = sum(1 for _, _, result in rows if result.startswith("PASS"))
 wns, whs = re.search(r"WNS (\S+) WHS (\S+)", open(os.path.join(results, "build.txt")).read()).groups()
@@ -66,8 +71,14 @@ date = datetime.date.fromtimestamp(os.path.getmtime(os.path.join(results, "resul
 lines = [
     "# Test results", "",
     f"Every simulation set of `vivado/vit.xpr` was run in Vivado 2022.2 on Linux, the way **Run Simulation** "
-    f"runs it, on {date} (git commit `{commit}`). Each set's full simulation log is `test_results/<set>.log`; "
+    f"runs it, on {date} (git commit `{tested}`). Each set's full simulation log is `test_results/<set>.log`; "
     "running a set in the GUI prints the same PASS line.", "",
+]
+if since:
+    lines += [f"The package is git commit `{commit}`. The commits since `{tested}`:", ""]
+    lines += [f"- `{c[:c.index(' ')]}` {c[c.index(' ') + 1:]}" for c in since.splitlines()]
+    lines += [""]
+lines += [
     f"**{passed} of {len(rows)} simulation sets pass.**", "",
     "| Simulation set | Result | Time |", "|---|---|---|",
 ]
@@ -75,7 +86,7 @@ for name, seconds, result in rows:
     lines.append(f"| `{name}` | {result.replace('|', '/')} | {duration(seconds)} |")
 lines += [
     "", "## Bitstream", "",
-    f"`bitstream/nexys_top_ddr.bit` is the result of **Generate Bitstream** in `vivado/vit.xpr` at the same commit, "
+    f"`bitstream/nexys_top_ddr.bit` is the result of **Generate Bitstream** in `vivado/vit.xpr` at commit `{tested}`, "
     f"for the Nexys A7-100T (xc7a100tcsg324-1) at 100 MHz.", "",
     "| | |", "|---|---|",
     f"| Worst setup slack (WNS) | {wns} ns |",
