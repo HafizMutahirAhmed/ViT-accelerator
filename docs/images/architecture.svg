@@ -1,0 +1,338 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1180" width="1400" role="img" aria-labelledby="title desc">
+<title id="title">DeiT-Tiny INT8 accelerator: system architecture on the Nexys A7</title>
+<desc id="desc">The host PC talks over a USB-UART to axi_host_bridge. The bridge writes weights and a run list to DDR2 through a SmartConnect and the MIG. An AXI DMA copies each phase from DDR2 into vit_axi_wrapper as a 64-bit stream. Inside matmul_engine a sequencer runs a table of descriptors on a pool of eight block-RAM buffers. Matmuls go through an 8 by 8 systolic array, a drain with bias and eight requantizers. Non-linear ops go through residual add, GELU, LayerNorm and softmax. Results return to the pool.</desc>
+<style>
+svg {
+  --sheet:#ffffff; --fg:#1b2328; --muted:#5b6870; --rule:#d5dce0; --zone:#f0f3f5;
+  --built:#1f6f9c; --built-fill:#e3f0f7; --ip:#5e6b74; --ip-fill:#eceff1;
+  --ext:#2f7f72; --ext-fill:#e6f4f1; --mem:#8a3a6b; --mem-fill:#f7e6f0;
+  --pe:#f6e3b8; --pe-line:#b26b00;
+  --axi:#c0392b; --lite:#4048b8; --st:#23845a; --ctl:#7d8a92;
+}
+@media (prefers-color-scheme: dark) { svg {
+  --sheet:#161d21; --fg:#e3e9ec; --muted:#94a3ab; --rule:#2c373d; --zone:#1b2327;
+  --built:#6fb7e0; --built-fill:#16303f; --ip:#a3b1ba; --ip-fill:#232c31;
+  --ext:#6cc7b6; --ext-fill:#14302b; --mem:#e79ac8; --mem-fill:#3a1a2e;
+  --pe:#5a4a22; --pe-line:#f0a845;
+  --axi:#ff8a7a; --lite:#9aa2ff; --st:#6fd39a; --ctl:#8d9aa2;
+} }
+text { font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,"DejaVu Sans",sans-serif; fill:var(--fg); }
+.bg { fill:var(--sheet); }
+.h1 { font-size:24px; font-weight:700; }
+.sub { font-size:13px; fill:var(--muted); }
+.t { font-size:14px; font-weight:600; }
+.s { font-size:11.5px; fill:var(--muted); }
+.lbl { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace; font-size:10.5px; }
+.zl { font-size:12px; font-weight:700; letter-spacing:.08em; fill:var(--muted); }
+.lg { font-size:12.5px; fill:var(--muted); }
+.zone { fill:var(--zone); stroke:var(--rule); }
+.chip { fill:var(--sheet); stroke:var(--fg); stroke-width:1.6; }
+.bb { fill:var(--built-fill); stroke:var(--built); stroke-width:1.5; }
+.bi { fill:var(--ip-fill); stroke:var(--ip); stroke-width:1.5; }
+.be { fill:var(--ext-fill); stroke:var(--ext); stroke-width:1.5; }
+.bm { fill:var(--mem-fill); stroke:var(--mem); stroke-width:1.5; }
+.unit { fill:none; stroke:var(--muted); stroke-width:1.2; stroke-dasharray:2 4; }
+.pe { fill:var(--pe); stroke:var(--pe-line); stroke-width:.8; }
+.l-axi { fill:none; stroke:var(--axi); stroke-width:3; }
+.l-lite { fill:none; stroke:var(--lite); stroke-width:2.2; }
+.l-st { fill:none; stroke:var(--st); stroke-width:2.6; }
+.l-raw { fill:none; stroke:var(--fg); stroke-width:2; }
+.l-ctl { fill:none; stroke:var(--ctl); stroke-width:1.5; stroke-dasharray:5 4; }
+.k-fg { fill:var(--fg); } .k-axi { fill:var(--axi); } .k-lite { fill:var(--lite); } .k-st { fill:var(--st); } .k-ctl { fill:var(--ctl); }
+.c-fg { fill:var(--fg); } .c-axi { fill:var(--axi); } .c-lite { fill:var(--lite); } .c-st { fill:var(--st); } .c-ctl { fill:var(--ctl); } .c-muted { fill:var(--muted); }
+</style>
+<defs>
+<marker id="m-fg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="k-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="m-axi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4.6" markerHeight="4.6" orient="auto-start-reverse"><path class="k-axi" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="m-lite" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path class="k-lite" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="m-st" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="k-st" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="m-ctl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="k-ctl" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="bg" width="1400" height="1180"/>
+<text class="h1" x="20" y="36">DeiT-Tiny INT8 accelerator</text>
+<text class="sub" x="20" y="56">System architecture on the Nexys A7-100T. Arrows are labelled with what they carry in one clock beat.</text>
+<rect class="bb" x="20" y="70" width="22" height="14" rx="2"/><text class="lg" x="49" y="82">RTL in this repo</text>
+<rect class="bi" x="170" y="70" width="22" height="14" rx="2"/><text class="lg" x="199" y="82">Xilinx IP</text>
+<rect class="be" x="275" y="70" width="22" height="14" rx="2"/><text class="lg" x="304" y="82">Off-chip</text>
+<rect class="bm" x="370" y="70" width="22" height="14" rx="2"/><text class="lg" x="399" y="82">On-chip memory (BRAM, tables)</text>
+<rect class="unit" x="610" y="70" width="22" height="14" rx="2"/><text class="lg" x="639" y="82">Unit with its tables</text>
+<line class="l-axi" x1="800" y1="77" x2="826" y2="77"/><text class="lg" x="832" y="82">AXI4</text>
+<line class="l-lite" x1="880" y1="77" x2="906" y2="77"/><text class="lg" x="912" y="82">AXI4-Lite</text>
+<line class="l-st" x1="985" y1="77" x2="1011" y2="77"/><text class="lg" x="1017" y="82">AXI4-Stream / data</text>
+<line class="l-raw" x1="1145" y1="77" x2="1171" y2="77"/><text class="lg" x="1177" y="82">Wires</text>
+<line class="l-ctl" x1="1220" y1="77" x2="1246" y2="77"/><text class="lg" x="1252" y="82">Control</text>
+<rect class="be" x="60" y="100" width="260" height="56" rx="3"/>
+<text class="t" x="190.0" y="124.0" text-anchor="middle">Host PC, Python</text>
+<text class="s" x="190.0" y="141.0" text-anchor="middle">run_image.py: weights once, then image + RUN</text>
+<rect class="be" x="1010" y="100" width="300" height="56" rx="3"/>
+<text class="t" x="1160.0" y="124.0" text-anchor="middle">DDR2 SDRAM, 128 MB</text>
+<text class="s" x="1160.0" y="141.0" text-anchor="middle">weights, biases, descriptors, run list, image</text>
+<rect class="chip" x="16" y="180" width="1368" height="986" rx="6"/>
+<text class="zl" x="1370" y="1156" text-anchor="end">XC7A100T · 20,854 LUT · 161 of 240 DSP · 112 of 135 BRAM tiles · 100 MHz, WNS +0.386 ns</text>
+<rect class="zone" x="30" y="192" width="470" height="142" rx="4"/>
+<text class="zl" x="44" y="212" text-anchor="start">BOARD · boards/nexys_a7</text>
+<rect class="bb" x="60" y="222" width="200" height="62" rx="3"/>
+<text class="t" x="160.0" y="241.5" text-anchor="middle">uart_rx, uart_tx</text>
+<text class="s" x="160.0" y="258.5" text-anchor="middle">8N1, 921,600 baud</text>
+<text class="s" x="160.0" y="273.5" text-anchor="middle">nexys_top_ddr</text>
+<rect class="bi" x="290" y="222" width="190" height="44" rx="3"/>
+<text class="t" x="385.0" y="240.0" text-anchor="middle">Clocking Wizard</text>
+<text class="s" x="385.0" y="257.0" text-anchor="middle">100 MHz system · 200 MHz MIG</text>
+<rect class="bb" x="290" y="276" width="190" height="44" rx="3"/>
+<text class="t" x="385.0" y="294.0" text-anchor="middle">LEDs</text>
+<text class="s" x="385.0" y="311.0" text-anchor="middle">busy, done, error, lost, DDR ready</text>
+<rect class="zone" x="520" y="192" width="850" height="142" rx="4"/>
+<text class="zl" x="534" y="212" text-anchor="start">BLOCK DESIGN · memory_system</text>
+<rect class="bi" x="540" y="222" width="180" height="98" rx="3"/>
+<text class="t" x="630.0" y="259.5" text-anchor="middle">SmartConnect</text>
+<text class="s" x="630.0" y="276.5" text-anchor="middle">2 in, 2 out</text>
+<text class="s" x="630.0" y="291.5" text-anchor="middle">crosses 100 ↔ 81.25 MHz</text>
+<rect class="bi" x="800" y="252" width="180" height="68" rx="3"/>
+<text class="t" x="890.0" y="274.5" text-anchor="middle">AXI DMA</text>
+<text class="s" x="890.0" y="291.5" text-anchor="middle">memory to stream</text>
+<text class="s" x="890.0" y="306.5" text-anchor="middle">no scatter-gather</text>
+<rect class="bi" x="1060" y="222" width="300" height="98" rx="3"/>
+<text class="t" x="1210.0" y="259.5" text-anchor="middle">MIG 7-series</text>
+<text class="s" x="1210.0" y="276.5" text-anchor="middle">DDR2 controller, 325 MHz, 4:1</text>
+<text class="s" x="1210.0" y="291.5" text-anchor="middle">ui_clk 81.25 MHz</text>
+<path class="l-raw" d="M240,156 V222" marker-end="url(#m-fg)" marker-start="url(#m-fg)"/>
+<text class="lbl c-fg" x="248" y="172" text-anchor="start">USB-UART · 1b serial each way</text>
+<path class="l-raw" d="M1160,156 V222" marker-end="url(#m-fg)" marker-start="url(#m-fg)"/>
+<text class="lbl c-fg" x="1168" y="174" text-anchor="start">DDR2 bus · 16b</text>
+<path class="l-axi" d="M720,235 H1060" marker-end="url(#m-axi)" marker-start="url(#m-axi)"/>
+<text class="lbl c-axi" x="890" y="228" text-anchor="middle">AXI4 · 128b</text>
+<path class="l-axi" d="M800,296 H722" marker-end="url(#m-axi)"/>
+<text class="lbl c-axi" x="761" y="289" text-anchor="middle">64b</text>
+<path class="l-lite" d="M720,272 H800" marker-end="url(#m-lite)"/>
+<text class="lbl c-lite" x="760" y="265" text-anchor="middle">32b</text>
+<line x1="16" y1="346" x2="1384" y2="346" stroke="var(--muted)" stroke-dasharray="8 5"/>
+<rect class="zone" x="30" y="356" width="1340" height="140" rx="4"/>
+<text class="zl" x="1356" y="376" text-anchor="end">ACCELERATOR_SYSTEM · rtl/interface</text>
+<rect class="bb" x="60" y="386" width="560" height="94" rx="3"/>
+<text class="t" x="340.0" y="414.0" text-anchor="middle">axi_host_bridge</text>
+<text class="s" x="340.0" y="431.0" text-anchor="middle">host packets with CRC-16 → AXI transactions</text>
+<text class="s" x="340.0" y="446.0" text-anchor="middle">WRITE_DDR · READ_DDR · DMA_LOAD · RUN</text>
+<text class="s" x="340.0" y="461.0" text-anchor="middle">RUN walks the run list in DDR2 on its own: LOAD, START, LOAD, START …</text>
+<polygon class="bb" points="810,386 970,386 950,420 830,420"/>
+<text class="t" x="890" y="408" text-anchor="middle">stream mux</text>
+<rect class="bb" x="750" y="436" width="610" height="44" rx="3"/>
+<text class="t" x="1055.0" y="454.0" text-anchor="middle">vit_axi_wrapper → vit_axi_core</text>
+<text class="s" x="1055.0" y="471.0" text-anchor="middle">AXI registers and stream targets: pool, bias store, LayerNorm constants, descriptors</text>
+<path class="l-raw" d="M240,284 V386" marker-end="url(#m-fg)" marker-start="url(#m-fg)"/>
+<text class="lbl c-fg" x="248" y="362" text-anchor="start">bytes · 8b each way</text>
+<path class="l-lite" d="M560,386 V340 H630 V322" marker-end="url(#m-lite)" marker-start="url(#m-lite)"/>
+<text class="lbl c-lite" x="568" y="368" text-anchor="start">32b · DDR2, DMA, run list</text>
+<path class="l-st" d="M890,320 V386" marker-end="url(#m-st)"/>
+<text class="lbl c-st" x="898" y="362" text-anchor="start">64b · 8 bytes per beat</text>
+<path class="l-st" d="M620,403 H820" marker-end="url(#m-st)"/>
+<text class="lbl c-st" x="720" y="396" text-anchor="middle">load 64b</text>
+<path class="l-st" d="M890,420 V436" marker-end="url(#m-st)"/>
+<path class="l-lite" d="M620,448 H750" marker-end="url(#m-lite)"/>
+<text class="lbl c-lite" x="685" y="441" text-anchor="middle">32b registers</text>
+<path class="l-st" d="M750,470 H622" marker-end="url(#m-st)"/>
+<text class="lbl c-st" x="685" y="485" text-anchor="middle">store 64b</text>
+<rect class="zone" x="30" y="508" width="1340" height="560" rx="4"/>
+<text class="zl" x="1356" y="530" text-anchor="end">MATMUL_ENGINE · rtl/core</text>
+<path class="l-raw" d="M1050,480 V524 H120 V548" marker-end="url(#m-fg)" marker-start="url(#m-fg)"/>
+<path class="l-raw" d="M820,524 V548" marker-end="url(#m-fg)"/>
+<path class="l-raw" d="M120,524 H46 V962 H60" marker-end="url(#m-fg)"/>
+<text class="lbl c-fg" x="560" y="519" text-anchor="middle">host port: pool 8 × int8 · bias 8 × int32 · LayerNorm 48b · descriptors 32b</text>
+<rect class="bm" x="60" y="548" width="240" height="54" rx="3"/>
+<text class="t" x="180.0" y="571.0" text-anchor="middle">Descriptor memory</text>
+<text class="s" x="180.0" y="588.0" text-anchor="middle">256 ops × 160b = 5 KB</text>
+<rect class="bb" x="60" y="622" width="240" height="62" rx="3"/>
+<text class="t" x="180.0" y="641.5" text-anchor="middle">Sequencer</text>
+<text class="s" x="180.0" y="658.5" text-anchor="middle">fetches an op, loads the register bank,</text>
+<text class="s" x="180.0" y="673.5" text-anchor="middle">runs one op after the other</text>
+<rect class="bb" x="60" y="740" width="240" height="74" rx="3"/>
+<text class="t" x="180.0" y="765.5" text-anchor="middle">matmul_stream_controller</text>
+<text class="s" x="180.0" y="782.5" text-anchor="middle">walks a matmul tile by tile:</text>
+<text class="s" x="180.0" y="797.5" text-anchor="middle">addresses, lane enables, first_k, tile_done</text>
+<rect class="bm" x="60" y="930" width="240" height="64" rx="3"/>
+<text class="t" x="180.0" y="950.5" text-anchor="middle">Bias store</text>
+<text class="s" x="180.0" y="967.5" text-anchor="middle">8 banks × 1,024 × int32 = 32 KB</text>
+<text class="s" x="180.0" y="982.5" text-anchor="middle">per-column bias, added in the drain</text>
+<path class="l-st" d="M180,602 V622" marker-end="url(#m-st)"/>
+<path class="l-ctl" d="M180,684 V740" marker-end="url(#m-ctl)"/>
+<text class="lbl c-ctl" x="188" y="716" text-anchor="start">op fields</text>
+<rect class="bm" x="340" y="548" width="1010" height="88" rx="3"/>
+<text class="t" x="352" y="566">Buffer pool: 8 buffers × 8 banks, 230 KB as sized for 50 tokens. An op names its buffers, so nothing is copied.</text>
+<rect class="bm" x="350.0" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="409.0" y="590" text-anchor="middle" style="font-size:12.5px">0 X</text>
+<text class="s" x="409.0" y="605" text-anchor="middle">residual</text>
+<text class="lbl c-muted" x="409.0" y="620" text-anchor="middle">1,344 words</text>
+<rect class="bm" x="474.5" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="533.5" y="590" text-anchor="middle" style="font-size:12.5px">1 W</text>
+<text class="s" x="533.5" y="605" text-anchor="middle">weights</text>
+<text class="lbl c-muted" x="533.5" y="620" text-anchor="middle">16,384 words</text>
+<rect class="bm" x="599.0" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="658.0" y="590" text-anchor="middle" style="font-size:12.5px">2 BIG</text>
+<text class="s" x="658.0" y="605" text-anchor="middle">input, O, fc1</text>
+<text class="lbl c-muted" x="658.0" y="620" text-anchor="middle">5,376 words</text>
+<rect class="bm" x="723.5" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="782.5" y="590" text-anchor="middle" style="font-size:12.5px">3 N</text>
+<text class="s" x="782.5" y="605" text-anchor="middle">LN, proj, fc2</text>
+<text class="lbl c-muted" x="782.5" y="620" text-anchor="middle">1,344 words</text>
+<rect class="bm" x="848.0" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="907.0" y="590" text-anchor="middle" style="font-size:12.5px">4 S</text>
+<text class="s" x="907.0" y="605" text-anchor="middle">scores, logits</text>
+<text class="lbl c-muted" x="907.0" y="620" text-anchor="middle">1,050 words</text>
+<rect class="bm" x="972.5" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="1031.5" y="590" text-anchor="middle" style="font-size:12.5px">5 QV</text>
+<text class="s" x="1031.5" y="605" text-anchor="middle">Q, V</text>
+<text class="lbl c-muted" x="1031.5" y="620" text-anchor="middle">2,544 words</text>
+<rect class="bm" x="1097.0" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="1156.0" y="590" text-anchor="middle" style="font-size:12.5px">6 K</text>
+<text class="s" x="1156.0" y="605" text-anchor="middle">K</text>
+<text class="lbl c-muted" x="1156.0" y="620" text-anchor="middle">1,344 words</text>
+<rect class="bm" x="1221.5" y="574" width="118" height="54" rx="2"/>
+<text class="t" x="1280.5" y="590" text-anchor="middle" style="font-size:12.5px">7</text>
+<text class="s" x="1280.5" y="605" text-anchor="middle">unused</text>
+<text class="lbl c-muted" x="1280.5" y="620" text-anchor="middle">16 words</text>
+<text class="zl" x="350" y="668">MATMUL PATH</text>
+<polygon class="bb" points="400,676 700,676 680,706 420,706"/>
+<text class="t" x="550" y="696" text-anchor="middle">buffer select + lane mask</text>
+<path class="l-st" d="M470,636 V676" marker-end="url(#m-st)"/>
+<path class="l-st" d="M630,636 V676" marker-end="url(#m-st)"/>
+<text class="lbl c-st" x="478" y="660" text-anchor="start">A</text>
+<text class="lbl c-st" x="638" y="660" text-anchor="start">B</text>
+<path class="l-st" d="M550,706 V722" marker-end="url(#m-st)"/>
+<text class="lbl c-st" x="558" y="719" text-anchor="start">8 × int8 + 8 × int8 = 128b</text>
+<rect class="bb" x="400" y="726" width="300" height="24" rx="3"/>
+<text class="s" x="550.0" y="742.5" text-anchor="middle">skew B: lane i delayed by i cycles</text>
+<rect class="bb" x="370" y="756" width="24" height="148" rx="3"/>
+<text class="s" transform="translate(386 830) rotate(-90)" text-anchor="middle">skew A</text>
+<rect class="bb" x="400" y="756" width="300" height="148" rx="3"/>
+<rect class="pe" x="410.0" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="762.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="776.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="791.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="805.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="820.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="834.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="849.0" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="410.0" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="445.5" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="481.0" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="516.5" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="552.0" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="587.5" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="623.0" y="863.5" width="29" height="11" rx="1.5"/>
+<rect class="pe" x="658.5" y="863.5" width="29" height="11" rx="1.5"/>
+<rect x="440" y="790" width="220" height="46" rx="3" class="bg" opacity=".95"/>
+<text class="t" x="550" y="811" text-anchor="middle">Systolic array, 8 × 8</text>
+<text class="s" x="550" y="827" text-anchor="middle">1 DSP per PE, int8 × int8 → int32</text>
+<path class="l-ctl" d="M300,776 H368" marker-end="url(#m-ctl)"/>
+<path class="l-raw" d="M550,904 V930" marker-end="url(#m-fg)"/>
+<text class="lbl c-fg" x="558" y="921" text-anchor="start">8 × int32 = 256b</text>
+<rect class="bb" x="400" y="930" width="300" height="42" rx="3"/>
+<text class="t" x="550.0" y="947.0" text-anchor="middle">Drain</text>
+<text class="s" x="550.0" y="964.0" text-anchor="middle">one accumulator row or column per cycle, + bias</text>
+<path class="l-raw" d="M300,951 H398" marker-end="url(#m-fg)"/>
+<text class="lbl c-fg" x="349" y="944" text-anchor="middle">256b</text>
+<path class="l-raw" d="M550,972 V988" marker-end="url(#m-fg)"/>
+<rect class="bb" x="400" y="990" width="300" height="54" rx="3"/>
+<text class="t" x="550.0" y="1005.5" text-anchor="middle">Requantize × 8</text>
+<text class="s" x="550.0" y="1022.5" text-anchor="middle">out = clip((acc · scale) &gt;&gt;&gt; shift)</text>
+<text class="s" x="550.0" y="1037.5" text-anchor="middle">8-bit scale, 5-bit shift, per op</text>
+<path class="l-st" d="M700,1017 H738 V638" marker-end="url(#m-st)"/>
+<text class="lbl c-st" transform="translate(730 830) rotate(-90)" text-anchor="middle">8 × int8 = 64b</text>
+<text class="zl" x="790" y="668">ROW OPS</text>
+<rect class="bb" x="790" y="676" width="560" height="30" rx="3"/>
+<text class="t" x="1070.0" y="694.5" text-anchor="middle">row_op_reader</text>
+<path class="l-st" d="M1070,636 V676" marker-end="url(#m-st)"/>
+<text class="lbl c-st" x="1078" y="660" text-anchor="start">8 × int8 per cycle, 2 operands for add</text>
+<rect class="unit" x="790" y="726" width="110" height="178" rx="4"/>
+<rect class="bb" x="797" y="734" width="96" height="162" rx="3"/>
+<text class="t" x="845.0" y="803.5" text-anchor="middle">Residual add</text>
+<text class="s" x="845.0" y="820.5" text-anchor="middle">two scales,</text>
+<text class="s" x="845.0" y="835.5" text-anchor="middle">saturates</text>
+<path class="l-st" d="M845.0,706 V724" marker-end="url(#m-st)"/>
+<path class="l-st" d="M845.0,904 V928" marker-end="url(#m-st)"/>
+<rect class="unit" x="910" y="726" width="120" height="178" rx="4"/>
+<rect class="bb" x="917" y="734" width="106" height="80" rx="3"/>
+<text class="t" x="970.0" y="770.0" text-anchor="middle">GELU</text>
+<text class="s" x="970.0" y="787.0" text-anchor="middle">1 pass</text>
+<rect class="bm" x="917" y="822" width="106" height="74" rx="3"/>
+<text class="t" x="970.0" y="855.0" text-anchor="middle">table</text>
+<text class="s" x="970.0" y="872.0" text-anchor="middle">12 × 256 × 8b</text>
+<path class="l-st" d="M970.0,706 V724" marker-end="url(#m-st)"/>
+<path class="l-st" d="M970.0,904 V928" marker-end="url(#m-st)"/>
+<rect class="unit" x="1040" y="726" width="165" height="178" rx="4"/>
+<rect class="bb" x="1047" y="734" width="151" height="80" rx="3"/>
+<text class="t" x="1122.5" y="762.5" text-anchor="middle">LayerNorm</text>
+<text class="s" x="1122.5" y="779.5" text-anchor="middle">2 passes:</text>
+<text class="s" x="1122.5" y="794.5" text-anchor="middle">mean, variance</text>
+<rect class="bm" x="1047" y="822" width="151" height="74" rx="3"/>
+<text class="t" x="1122.5" y="855.0" text-anchor="middle">1/√x, gain</text>
+<text class="s" x="1122.5" y="872.0" text-anchor="middle">256 × 12b, 1,024 × 48b</text>
+<path class="l-st" d="M1122.5,706 V724" marker-end="url(#m-st)"/>
+<path class="l-st" d="M1122.5,904 V928" marker-end="url(#m-st)"/>
+<rect class="unit" x="1215" y="726" width="135" height="178" rx="4"/>
+<rect class="bb" x="1222" y="734" width="121" height="80" rx="3"/>
+<text class="t" x="1282.5" y="762.5" text-anchor="middle">Softmax</text>
+<text class="s" x="1282.5" y="779.5" text-anchor="middle">3 passes,</text>
+<text class="s" x="1282.5" y="794.5" text-anchor="middle">1 division / row</text>
+<rect class="bm" x="1222" y="822" width="121" height="74" rx="3"/>
+<text class="t" x="1282.5" y="855.0" text-anchor="middle">exp table</text>
+<text class="s" x="1282.5" y="872.0" text-anchor="middle">36 × 256 × 12b</text>
+<path class="l-st" d="M1282.5,706 V724" marker-end="url(#m-st)"/>
+<path class="l-st" d="M1282.5,904 V928" marker-end="url(#m-st)"/>
+<rect class="bb" x="790" y="930" width="560" height="30" rx="3"/>
+<text class="t" x="1070.0" y="948.5" text-anchor="middle">row_op_writer</text>
+<path class="l-st" d="M790,945 H768 V638" marker-end="url(#m-st)"/>
+<text class="lbl c-st" transform="translate(760 830) rotate(-90)" text-anchor="middle">8 × int8 = 64b</text>
+<path class="l-ctl" d="M300,650 H322 V1054 H1362 V691 H1352" marker-end="url(#m-ctl)"/>
+<text class="lbl c-ctl" x="1040" y="1048" text-anchor="middle">op fields: which unit, which buffers, which table</text>
+<rect class="zone" x="30" y="1080" width="1340" height="56" rx="4"/>
+<text class="zl" x="44" y="1100">ONE ENCODER LAYER = 26 OPS, IN THIS ORDER</text>
+<text class="lbl" x="44" y="1122" style="font-size:12px">LN1 → Q, K, V (×3 heads) → S = Q·Kᵀ (×3) → softmax (×3) → O = P·V (×3) → projection → residual add → LN2 → fc1 → GELU → fc2 → residual add</text>
+</svg>

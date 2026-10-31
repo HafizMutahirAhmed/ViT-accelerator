@@ -54,19 +54,7 @@ bitstream ([section 2](#2-running-it)).
 
 ### The idea in one picture
 
-```
- PC (Python)                               FPGA (Nexys A7)
- ───────────                               ───────────────
- make_model.py  ──► model files            ┌────────────────────────────────────────────┐
- run_image.py   ──► weights once ── UART ──►│ axi_host_bridge ──► DDR2 (weights, run list)│
-                ──► image + "RUN" ─────────►│        │                    │ DMA           │
-                ◄── 10 class scores ◄───────│        ▼                    ▼               │
-                                            │   vit_axi_wrapper ──► matmul_engine         │
-                                            │                      (8x8 systolic array,   │
-                                            │                       GELU, LayerNorm,      │
-                                            │                       softmax, residual add)│
-                                            └────────────────────────────────────────────┘
-```
+![System architecture of the DeiT-Tiny accelerator on the Nexys A7: the host PC, the UART, axi_host_bridge, DDR2 through the MIG and SmartConnect, the AXI DMA, and inside matmul_engine the descriptor sequencer, buffer pool, systolic array and row ops](docs/images/architecture.svg)
 
 1. **On the PC, `make_model.py`** takes the pretrained DeiT-Tiny from `timm`,
    quantizes it to INT8 and compiles the forward pass into a **descriptor
