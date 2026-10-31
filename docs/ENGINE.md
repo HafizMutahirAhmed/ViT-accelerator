@@ -11,7 +11,7 @@ One op computes, in INT8 with INT32 accumulation,
 for an M x K activation and a K x N weight. Operands and results live in a pool
 of block RAM buffers. An op names its two input buffers and its output buffer
 by id, so the output of one op becomes the input of a later op without any
-copy. The frozen version is commit `6503c5f`.
+copy. The frozen version is commit `8699316`.
 
 ## Block diagram
 
@@ -398,7 +398,7 @@ phase's last output is also read back through the host port.
   BUFFER_READ_LATENCY + 1, so that the bias of a tile is read in time. That
   holds for every array of 2x2 or larger.
 - **Row ops.** The residual add, GELU, LayerNorm and softmax are in the engine
-  since commit `29bc12b`; see "Row ops" below. Commit `6503c5f`
+  since commit `ca96002`; see "Row ops" below. Commit `8699316`
   has only MATMUL.
 - **No reset on the datapath.** Only control registers are reset.
 
@@ -422,7 +422,7 @@ Out-of-context place-and-route on the XC7A200T-1 (`xc7a200tfbg484-1`) with a
 6.667 ns clock, measured with a script that has since been removed (with 2 GELU
 and 8 exp tables):
 
-| | 8x8, commit `3a8d81d` | 8x8, commit `6503c5f` | 16x16, matmul only |
+| | 8x8, commit `eb1c9de` | 8x8, commit `8699316` | 16x16, matmul only |
 |---|---|---|---|
 | Contents | matmul and the four row ops, pool plan above | matmul only, 5 buffers | matmul only |
 | WNS | +0.058 ns | +0.165 ns | -0.017 ns (1 endpoint) |
@@ -431,16 +431,16 @@ and 8 exp tables):
 | BRAM36 / BRAM18 | 317 / 18 | 248 / 29 | 256 / 53 |
 | LUT / FF | 10,314 / 9,123 | 5,250 / 5,295 | 12,390 / 12,675 |
 
-Step by step, each at 8x8 with the five-buffer depths of commit `6503c5f`:
+Step by step, each at 8x8 with the five-buffer depths of commit `8699316`:
 
 | Commit | Adds | WNS | LUT | FF | DSP | BRAM36 / BRAM18 |
 |---|---|---|---|---|---|---|
-| `263e844` | residual add, row op reader and writer | +0.117 ns | 6,780 | 6,290 | 97 | 248 / 29 |
-| `5edbfe2` | GELU | +0.084 ns | 6,849 | 6,405 | 97 | 248 / 33 |
-| `f92715b` | LayerNorm | +0.119 ns | 9,531 | 7,925 | 153 | 249 / 34 |
-| `29bc12b` | softmax | +0.107 ns | 10,200 | 8,921 | 161 | 253 / 34 |
+| `d5f4029` | residual add, row op reader and writer | +0.117 ns | 6,780 | 6,290 | 97 | 248 / 29 |
+| `14b9656` | GELU | +0.084 ns | 6,849 | 6,405 | 97 | 248 / 33 |
+| `3fba647` | LayerNorm | +0.119 ns | 9,531 | 7,925 | 153 | 249 / 34 |
+| `ca96002` | softmax | +0.107 ns | 10,200 | 8,921 | 161 | 253 / 34 |
 
-- **Block RAM is the tight resource.** The build of commit `3a8d81d` uses 326 of the
+- **Block RAM is the tight resource.** The build of commit `eb1c9de` uses 326 of the
   365 block RAM tiles (89%): 304 BRAM36 for the pool, 8 for the bias store,
   5 for the row ops' tables and constants, and the rest as BRAM18. Vivado
   rounds each pool bank up to a power of two; packed by hand the pool would
@@ -449,5 +449,5 @@ Step by step, each at 8x8 with the five-buffer depths of commit `6503c5f`:
   in the add, 56 in LayerNorm and 8 in softmax.
 - **The worst paths** are the pool address routing and the drain's
   requantizer, as before the row ops.
-- The 16x16 column is the scaling check of commit `6503c5f`, built with a
+- The 16x16 column is the scaling check of commit `8699316`, built with a
   64-entry descriptor memory.
