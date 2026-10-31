@@ -71,9 +71,8 @@ stay fast. To look at signals: add them to the waveform, then Restart and Run Al
 | `nexys_top_ddr` | the top level through its pins, with a UART model |
 | `dma_ip` | the system with Xilinx's real AXI DMA IP |
 
-How long each set takes, and the result of the last run of all of them, is in
-**Test results** (`test_results/SUMMARY.md`, with every set's log): from seconds
-for the small blocks to about two hours for `axi_replay_run_nexys_L12`.
+A set takes from seconds for the small blocks to about two hours for
+`axi_replay_run_nexys_L12`.
 
 ## 4. Build the bitstream
 
@@ -82,11 +81,7 @@ synthesis and implementation first: **Yes**, then **OK**. It takes a while (the 
 time longer, while Vivado generates the IPs). The bitstream is `vivado/vit.runs/impl_1/nexys_top_ddr.bit`.
 
 To see the timing: **Open Implemented Design**, then Reports > **Report Timing
-Summary**. The worst setup slack (WNS) and hold slack (WHS) must be 0 or more;
-the package's build is in **Test results**.
-
-A bitstream built from this project is also in the package,
-`bitstream/nexys_top_ddr.bit`.
+Summary**. The worst setup slack (WNS) and hold slack (WHS) must be 0 or more.
 
 ## 5. Program the board
 
@@ -96,8 +91,7 @@ where `<Vivado>` is the Vivado installation, for example `/tools/Xilinx/Vivado/2
 
 1. Connect the Nexys A7 by USB and switch it on.
 2. Flow Navigator > **Open Hardware Manager** > **Open Target** > **Auto Connect**.
-3. **Program Device**, choose the bitstream (from step 4, or
-   `bitstream/nexys_top_ddr.bit`), **Program**.
+3. **Program Device**, choose the bitstream from step 4, **Program**.
 4. LED **LD4** comes on within a second: the DDR2 is ready. If it stays off,
    press CPU_RESET once.
 

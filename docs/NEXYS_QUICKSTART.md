@@ -27,13 +27,12 @@ from the clocking wizard. Sources and checksums are in the files.
   `<Vivado>/data/xicom/cable_drivers/lin64/install_script/install_drivers/install_drivers` once, as root.
 - Python 3 with `numpy`, `Pillow` and `pyserial`, and on Linux membership of the
   `dialout` group for the serial port.
-- A model: `python/models/nexys_L<N>/` (2, 6 and 12 layers are in the package).
-  Another one is made by `make_model.py`, which needs `torch`, `timm` and
-  `torchvision` in `.venv/`:
+- A model: `python/models/nexys_L<N>/`, made by `make_model.py`, which needs
+  `torch`, `timm` and `torchvision` in `.venv/`:
 
 ```sh
-python3 -m venv --system-site-packages .venv
-.venv/bin/pip install torch torchvision timm
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-model.txt
 .venv/bin/python python/make_model.py --board nexys --layers 2
 ```
 

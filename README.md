@@ -1,5 +1,7 @@
 # DeiT-Tiny FPGA accelerator
 
+**Version 1.0.0**: see [CHANGELOG.md](CHANGELOG.md).
+
 An INT8 hardware accelerator, in SystemVerilog, for the encoder layers of the
 pretrained DeiT-Tiny vision transformer (ViT-Ti/16: width 192, 3 heads of 64,
 MLP 768). It runs the first N of the 12 layers, N from 1 to 12, with the real
@@ -19,6 +21,32 @@ Everything on the hardware side is done in the **Vivado GUI** with one project,
 `vivado/vit.xpr`: the design, the constraints, the IPs and every testbench as a
 simulation set. The software side (making a model, running a digit on the
 board) is Python in a terminal. Step by step: [docs/VIVADO_GUI.md](docs/VIVADO_GUI.md).
+
+**Contents:** [Quick start](#quick-start) ·
+[1. How it works](#1-how-it-works) ·
+[2. Running it](#2-running-it) ·
+[3. Where things are](#3-where-things-are) ·
+[4. How to change things](#4-how-to-change-things) ·
+[5. Status and results](#5-status-and-results) ·
+[6. Reference documents](#6-reference-documents)
+
+## Quick start
+
+The test vectors and models are generated, so a fresh clone has none of them.
+Make them once (this needs torch, and downloads the pretrained weights and
+MNIST):
+
+```sh
+git clone https://github.com/HafizMutahirAhmed/ViT-accelerator.git
+cd ViT-accelerator
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-model.txt
+.venv/bin/python python/make_test_vectors.py
+.venv/bin/python python/run_image.py --model --digit 0   # the software model of the board, no board needed
+```
+
+Then open `vivado/vit.xpr` in Vivado 2022.2 for the simulation sets and the
+bitstream ([section 2](#2-running-it)).
 
 ---
 
@@ -165,8 +193,8 @@ nexys_top_ddr                       boards/nexys_a7: board top level
 | `accelerator_system` | `rtl/interface/accelerator_system.sv` | Bridge + wrapper + stream multiplexer: what a board instantiates |
 | `nexys_top_ddr`, `uart_rx`, `uart_tx` | `boards/nexys_a7/` | Nexys A7 top level: clocks, reset, UART, DDR2 block design, LEDs |
 
-Every module's header comment describes its ports, timing and fixed-point
-formats in full.
+The descriptor format, buffer layouts and cycle counts are in
+[docs/ENGINE.md](docs/ENGINE.md); the number formats are in the table above.
 
 ---
 
@@ -175,13 +203,14 @@ formats in full.
 ### What you need
 
 - **Vivado 2022.2** (Linux or Windows): the simulator and the toolchain.
-- Python 3 with `numpy`, `Pillow` and `pyserial` (on Ubuntu:
+- Python 3 with `numpy`, `Pillow` and `pyserial` (`requirements.txt`; on Ubuntu:
   `sudo apt install python3-numpy python3-pil python3-serial`). Only for making
-  new models or vectors you also need torch, in a virtual environment:
+  new models or vectors you also need torch, in a virtual environment. The
+  versions in `requirements-model.txt` are the ones this release was made with:
 
 ```sh
-python3 -m venv --system-site-packages .venv
-.venv/bin/pip install torch torchvision timm
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-model.txt
 ```
 
 ### In Vivado: the testbenches and the bitstream
@@ -240,7 +269,7 @@ byte-identical files. Pins, LEDs and troubleshooting are in
 | `docs/` | VIVADO_GUI (start here), and the reference: SPEC, ENGINE, HOST_PROTOCOL, AXI_REGISTER_MAP, NEXYS_QUICKSTART. |
 
 `python/models/` and `python/vectors/` are made by Python (`make_model.py`,
-`make_test_vectors.py`); they are not in git but are part of the package.
+`make_test_vectors.py`) and are not in git; see [Quick start](#quick-start).
 Vivado's own output (`vivado/vit.runs`, `vit.sim`, `vit.gen`, `vit.cache`) is
 made again by Vivado.
 
@@ -352,8 +381,8 @@ use, and what to watch, is in
 
 | | Status |
 |---|---|
-| RTL against the golden model | Bit-exact: every simulation set of `vivado/vit.xpr` passes (26 sets), including 6 layers through `RUN` and Xilinx's real AXI DMA |
-| Nexys A7 board | 2 layers on the board: all stages match the model (`--check`) and the digits are recognised. The current bitstream (tables for all 12 layers) builds at 100 MHz with timing met (WNS +0.386 ns) and uses 112 of 135 block RAM tiles. |
+| RTL against the golden model | Bit-exact: every simulation set of `vivado/vit.xpr` passes (27 sets), including 6 and 12 layers through `RUN` and Xilinx's real AXI DMA |
+| Nexys A7 board | 2 layers on the board with an earlier bitstream: all stages match the model (`--check`) and the digits are recognised. The current bitstream (`RUN`, tables for all 12 layers) builds at 100 MHz with timing met (WNS +0.386 ns, WHS +0.021 ns) and uses 112 of 135 block RAM tiles. |
 | Opal Kelly (224 x 224) | Simulated only |
 | MNIST accuracy (2,000 test digits) | 90.4 % with 6 layers, 81.8 % with 12 |
 
@@ -400,3 +429,5 @@ Cosine similarity between the INT8 model and FP32, measured on 20 images
 | [docs/HOST_PROTOCOL.md](docs/HOST_PROTOCOL.md) | You change the PC ↔ board protocol |
 | [docs/AXI_REGISTER_MAP.md](docs/AXI_REGISTER_MAP.md) | You connect the engine to another AXI system (a CPU or another DMA) |
 | [docs/NEXYS_QUICKSTART.md](docs/NEXYS_QUICKSTART.md) | You set up the board: pins, LEDs, serial ports, troubleshooting |
+| [boards/opal_kelly/README.md](boards/opal_kelly/README.md) | You port the design to the Opal Kelly XEM7310 |
+| [CHANGELOG.md](CHANGELOG.md) | You want to know what each version contains |

@@ -1,0 +1,4 @@
+# Host software: run_image.py, ddr_check.py
+numpy==2.1.1
+Pillow==10.2.0
+pyserial==3.5

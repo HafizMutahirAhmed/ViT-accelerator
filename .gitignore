@@ -30,3 +30,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Packages made for handing over
+*.zip
